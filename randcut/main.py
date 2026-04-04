@@ -22,7 +22,7 @@ app.add_middleware(
 # ─────────────────────────────────────────────
 # CONFIG — paste your Google Drive folder link here
 # The folder must be set to "Anyone with the link can view"
-DRIVE_FOLDER_LINK = "https://drive.google.com/drive/folders/1_1OK9CkUqjChTpGa1NE2yLcTGP5XIQmK?usp=sharing"
+DRIVE_FOLDER_LINK = "https://drive.google.com/drive/folders/YOUR_FOLDER_ID_HERE"
 CLIP_DURATION = 4   # seconds to grab from each clip
 NUM_CLIPS = 3       # how many clips to randomly pick
 # ─────────────────────────────────────────────
@@ -89,9 +89,14 @@ def trim_clip(input_path: Path, output_path: Path):
         "ffmpeg", "-y",
         "-i", str(input_path),
         "-t", str(CLIP_DURATION),
-        "-c:v", "libx264", "-preset", "fast",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",  # lowest memory usage
+        "-crf", "28",            # slightly lower quality = less memory
+        "-vf", "scale=1280:-2",  # cap resolution to 720p width
         "-c:a", "aac",
+        "-b:a", "128k",
         "-movflags", "+faststart",
+        "-threads", "1",         # single thread = much less RAM
         str(output_path)
     ]
     subprocess.run(cmd, check=True, capture_output=True)
@@ -107,8 +112,7 @@ def concat_clips(clip_paths: list[Path], output_path: Path):
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0",
         "-i", str(list_file),
-        "-c:v", "libx264", "-preset", "fast",
-        "-c:a", "aac",
+        "-c", "copy",   # just join the files, no re-encoding = very low memory
         "-movflags", "+faststart",
         str(output_path)
     ]
