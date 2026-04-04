@@ -22,7 +22,7 @@ app.add_middleware(
 # ─────────────────────────────────────────────
 # CONFIG — paste your Google Drive folder link here
 # The folder must be set to "Anyone with the link can view"
-DRIVE_FOLDER_LINK = "https://drive.google.com/drive/folders/1_1OK9CkUqjChTpGa1NE2yLcTGP5XIQmK?usp=sharing"
+DRIVE_FOLDER_LINK = "https://drive.google.com/drive/folders/1_1OK9CkUqjChTpGa1NE2yLcTGP5XIQmK?usp=drive_link"
 CLIP_DURATION = 4   # seconds to grab from each clip
 NUM_CLIPS = 3       # how many clips to randomly pick
 # ─────────────────────────────────────────────
