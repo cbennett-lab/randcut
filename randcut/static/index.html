@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RandCut</title>
+<title>WOW Moments</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap');
 
@@ -12,10 +12,11 @@
     --surface: #101010;
     --border: #1e1e1e;
     --accent: #ff3c00;
-    --accent-glow: rgba(255,60,0,0.15);
     --text: #efefef;
     --muted: #444;
     --green: #00ff88;
+    --btn-inactive: #141414;
+    --btn-inactive-border: #2a2a2a;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,28 +35,17 @@
     overflow-x: hidden;
   }
 
-  /* Scanline overlay */
   body::before {
     content: '';
     position: fixed; inset: 0;
     background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0,0,0,0.08) 2px,
-      rgba(0,0,0,0.08) 4px
+      0deg, transparent, transparent 2px,
+      rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px
     );
     pointer-events: none; z-index: 100;
   }
 
-  /* Corner brackets */
-  .bracket {
-    position: fixed;
-    width: 40px; height: 40px;
-    border-color: var(--border);
-    border-style: solid;
-    opacity: 0.5;
-  }
+  .bracket { position: fixed; width: 40px; height: 40px; border-color: var(--border); border-style: solid; opacity: 0.4; }
   .bracket.tl { top: 20px; left: 20px; border-width: 1px 0 0 1px; }
   .bracket.tr { top: 20px; right: 20px; border-width: 1px 1px 0 0; }
   .bracket.bl { bottom: 20px; left: 20px; border-width: 0 0 1px 1px; }
@@ -63,14 +53,12 @@
 
   .wrapper {
     width: 100%;
-    max-width: 560px;
+    max-width: 700px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0;
   }
 
-  /* Header */
   .header {
     text-align: center;
     margin-bottom: 48px;
@@ -78,12 +66,9 @@
 
   .title {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: clamp(72px, 16vw, 120px);
+    font-size: clamp(60px, 14vw, 100px);
     letter-spacing: 4px;
     line-height: 0.9;
-    color: var(--text);
-    position: relative;
-    display: inline-block;
   }
 
   .title span { color: var(--accent); }
@@ -96,47 +81,60 @@
     margin-top: 12px;
   }
 
-  /* The big button */
+  .categories-label {
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+    align-self: flex-start;
+  }
+
+  .categories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    margin-bottom: 24px;
+  }
+
+  .cat-btn {
+    flex: 1;
+    min-width: 180px;
+    background: var(--btn-inactive);
+    border: 1px solid var(--btn-inactive-border);
+    color: var(--muted);
+    padding: 18px 16px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 20px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  }
+
+  .cat-btn:hover { border-color: var(--accent); color: var(--text); }
+  .cat-btn.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   .generate-btn {
     width: 100%;
     background: var(--accent);
     color: #fff;
     border: none;
-    padding: 28px;
+    padding: 26px;
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 36px;
+    font-size: 34px;
     letter-spacing: 6px;
     cursor: pointer;
-    position: relative;
-    overflow: hidden;
     transition: all 0.15s;
     clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
   }
 
-  .generate-btn::before {
-    content: '';
-    position: absolute; inset: 0;
-    background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
-    pointer-events: none;
-  }
-
-  .generate-btn:hover {
-    background: #ff5520;
-    transform: translateY(-2px);
-    box-shadow: 0 8px 40px var(--accent-glow);
-  }
-
+  .generate-btn:hover { background: #ff5520; transform: translateY(-2px); box-shadow: 0 8px 40px rgba(255,60,0,0.2); }
   .generate-btn:active { transform: translateY(0); }
+  .generate-btn:disabled { background: #1e1e1e; color: var(--muted); cursor: not-allowed; transform: none; box-shadow: none; }
 
-  .generate-btn:disabled {
-    background: #1e1e1e;
-    color: var(--muted);
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-  }
-
-  /* Status panel */
   .status-panel {
     width: 100%;
     margin-top: 2px;
@@ -146,70 +144,32 @@
     padding: 20px 24px;
     display: none;
   }
-
   .status-panel.visible { display: block; }
 
-  .status-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-  }
+  .status-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 
   .status-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--muted);
-    flex-shrink: 0;
-    transition: background 0.3s;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0; transition: background 0.3s;
   }
   .status-dot.working { background: var(--accent); animation: pulse 1s infinite; }
   .status-dot.done { background: var(--green); animation: none; }
   .status-dot.error { background: #ff3333; animation: none; }
 
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-  .status-msg {
-    font-size: 12px;
-    color: var(--muted);
-    line-height: 1.5;
-  }
+  .status-msg { font-size: 12px; color: var(--muted); line-height: 1.5; }
 
-  /* Clips used */
-  .clips-used {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid var(--border);
-    display: none;
-  }
+  .clips-used { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: none; }
   .clips-used.visible { display: block; }
-
-  .clips-label {
-    font-size: 10px;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-bottom: 8px;
-  }
-
+  .clips-label { font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
   .clip-tag {
-    display: inline-block;
-    font-size: 10px;
-    background: #151515;
-    border: 1px solid var(--border);
-    padding: 3px 8px;
-    margin: 2px 3px 2px 0;
-    color: var(--text);
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: inline-block; font-size: 10px;
+    background: #151515; border: 1px solid var(--border);
+    padding: 3px 8px; margin: 2px 3px 2px 0; color: var(--text);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
-  /* Download button */
   .download-btn {
     display: none;
     width: 100%;
@@ -226,35 +186,29 @@
     text-align: center;
     transition: all 0.15s;
   }
-
-  .download-btn:hover {
-    background: rgba(0,255,136,0.05);
-    box-shadow: 0 0 30px rgba(0,255,136,0.1);
-  }
-
+  .download-btn:hover { background: rgba(0,255,136,0.05); box-shadow: 0 0 30px rgba(0,255,136,0.1); }
   .download-btn.visible { display: block; }
-
-  /* Footer */
-  .footer {
-    margin-top: 40px;
-    font-size: 10px;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--muted);
-    text-align: center;
-    line-height: 2;
-  }
 
   .counter {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 48px;
-    color: var(--border);
-    letter-spacing: 4px;
-    text-align: center;
-    margin-top: 24px;
-    transition: color 0.3s;
+    font-size: 48px; color: var(--border);
+    letter-spacing: 4px; text-align: center;
+    margin-top: 24px; transition: color 0.3s;
   }
   .counter.active { color: var(--accent); }
+
+  .footer {
+    margin-top: 40px; font-size: 10px;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: var(--muted); text-align: center; line-height: 2;
+  }
+
+  .no-selection-msg {
+    font-size: 11px; color: var(--accent);
+    text-align: center; margin-bottom: 10px;
+    display: none; letter-spacing: 1px;
+  }
+  .no-selection-msg.visible { display: block; }
 </style>
 </head>
 <body>
@@ -267,13 +221,16 @@
 <div class="wrapper">
 
   <div class="header">
-    <div class="title">RAND<span>CUT</span></div>
-    <div class="subtitle">3 random clips · 4 seconds each · 1 final video</div>
+    <div class="title">WOW<span>MOMENTS</span></div>
+    <div class="subtitle">Select a category · Generate your highlight reel</div>
   </div>
 
-  <button class="generate-btn" id="generateBtn" onclick="generate()">
-    GENERATE
-  </button>
+  <div class="categories-label">Choose your moment</div>
+  <div class="categories" id="categories"></div>
+
+  <div class="no-selection-msg" id="noSelectionMsg">← Select a category first</div>
+
+  <button class="generate-btn" id="generateBtn" onclick="generate()">GENERATE</button>
 
   <div class="status-panel" id="statusPanel">
     <div class="status-row">
@@ -286,24 +243,47 @@
     </div>
   </div>
 
-  <a class="download-btn" id="downloadBtn" href="#" download>
-    ↓ DOWNLOAD VIDEO
-  </a>
+  <a class="download-btn" id="downloadBtn" href="#" download>↓ DOWNLOAD VIDEO</a>
 
   <div class="counter" id="counter">00</div>
 
-  <div class="footer">
-    Each press picks a new random combination<br>
-    from your Google Drive folder
-  </div>
+  <div class="footer">Each press picks a new random combination</div>
 
 </div>
 
 <script>
+  let selectedCategory = null;
   let generateCount = 0;
   let pollInterval = null;
 
+  async function loadCategories() {
+    const res = await fetch('/categories');
+    const cats = await res.json();
+    const container = document.getElementById('categories');
+    container.innerHTML = '';
+    cats.forEach(cat => {
+      const btn = document.createElement('button');
+      btn.className = 'cat-btn';
+      btn.textContent = cat.label;
+      btn.dataset.key = cat.key;
+      btn.onclick = () => selectCategory(cat.key, btn);
+      container.appendChild(btn);
+    });
+  }
+
+  function selectCategory(key, btn) {
+    selectedCategory = key;
+    document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.getElementById('noSelectionMsg').classList.remove('visible');
+  }
+
   async function generate() {
+    if (!selectedCategory) {
+      document.getElementById('noSelectionMsg').classList.add('visible');
+      return;
+    }
+
     const btn = document.getElementById('generateBtn');
     const panel = document.getElementById('statusPanel');
     const dot = document.getElementById('statusDot');
@@ -324,34 +304,32 @@
     if (pollInterval) clearInterval(pollInterval);
 
     try {
-      const res = await fetch('/generate', { method: 'POST' });
+      const res = await fetch('/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: selectedCategory })
+      });
       const { job_id } = await res.json();
 
       pollInterval = setInterval(async () => {
         const s = await fetch(`/status/${job_id}`).then(r => r.json());
-
         msg.textContent = s.message || '...';
 
         if (s.clips_used && s.clips_used.length) {
           clipsUsed.classList.add('visible');
-          clipTags.innerHTML = s.clips_used.map(n =>
-            `<span class="clip-tag">${n}</span>`
-          ).join('');
+          clipTags.innerHTML = s.clips_used.map(n => `<span class="clip-tag">${n}</span>`).join('');
         }
 
         if (s.status === 'done') {
           clearInterval(pollInterval);
           dot.className = 'status-dot done';
           btn.disabled = false;
-
           generateCount++;
           counter.textContent = String(generateCount).padStart(2, '0');
           counter.classList.add('active');
-
           dlBtn.href = `/download/${s.file}`;
-          dlBtn.setAttribute('download', `randcut_${generateCount}.mp4`);
+          dlBtn.setAttribute('download', `wowmoment_${generateCount}.mp4`);
           dlBtn.classList.add('visible');
-
         } else if (s.status === 'error') {
           clearInterval(pollInterval);
           dot.className = 'status-dot error';
@@ -365,6 +343,8 @@
       btn.disabled = false;
     }
   }
+
+  loadCategories();
 </script>
 
 </body>
