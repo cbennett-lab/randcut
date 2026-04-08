@@ -22,8 +22,7 @@ app.add_middleware(
 # ─────────────────────────────────────────────
 # CONFIG — paste your Google Drive folder link here
 # The folder must be set to "Anyone with the link can view"
-DRIVE_FOLDER_LINK = "https://drive.google.com/drive/folders/1_1OK9CkUqjChTpGa1NE2yLcTGP5XIQmK?usp=drive_link"
-CLIP_DURATION = 4   # seconds to grab from each clip
+DRIVE_FOLDER_LINK = "https://drive.google.com/drive/folders/1bmqiC7FCn534qzak0gv6ZKWFqvQzWrwr?usp=sharing"
 NUM_CLIPS = 3       # how many clips to randomly pick
 # ─────────────────────────────────────────────
 
@@ -88,7 +87,6 @@ def trim_clip(input_path: Path, output_path: Path):
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
-        "-t", str(CLIP_DURATION),
         "-c:v", "libx264",
         "-preset", "ultrafast",  # lowest memory usage
         "-crf", "28",            # slightly lower quality = less memory
@@ -145,7 +143,7 @@ def run_pipeline(job_id: str):
 
             download_drive_file(video["id"], raw)
 
-            job_status[job_id]["message"] = f"Trimming clip {i+1}/{NUM_CLIPS} to {CLIP_DURATION}s..."
+            job_status[job_id]["message"] = f"Trimming clip {i+1}/{NUM_CLIPS}..."
             trim_clip(raw, trimmed_path)
             trimmed.append(trimmed_path)
 
