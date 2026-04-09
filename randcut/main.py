@@ -33,6 +33,11 @@ CATEGORIES = {
         "video_folder": "https://drive.google.com/drive/folders/1USBIKxJjDQkN86P-MGeIh_wdhFbdq_RB?usp=sharing",
         "audio_folder": "https://drive.google.com/drive/folders/121VtEgQky0ByhBEqpmSXsnRhs7qTe9-T?usp=sharing",
     },
+    "blocks": {
+        "label": "My Best Blocks",
+        "video_folder": "https://drive.google.com/drive/folders/1HsIrTFdloN1uZ8WzUVFl_CjsCaqdO75e?usp=sharing",
+        "audio_folder": "https://drive.google.com/drive/folders/1tDTbsJ6_0RgZem-hQwkhf7_jDh7Pspyx?usp=sharing",
+    },
 }
 
 NUM_CLIPS = 3
