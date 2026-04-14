@@ -74,6 +74,8 @@ def list_drive_files(folder_id: str, mime_prefix: str) -> list[dict]:
         "fields": "files(id, name)",
         "key": api_key,
         "pageSize": 200,
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
     }
     resp = requests.get(url, params=params, timeout=15)
     resp.raise_for_status()
