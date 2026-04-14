@@ -40,7 +40,7 @@ STACKED_CATEGORIES = {
         "players": {
             "carrington": {
                 "display": "ImDominus",
-                "irl_folder": "https://drive.google.com/drive/folders/1gMZ22YtOd-GSFJpia2piTGeimEJCfXEg?usp=sharing",
+                "irl_folder": "https://drive.google.com/drive/folders/1BiBbEo8dTOrEVwJtXR9Al8MTsojGI-wn?usp=sharing",
             }
         }
     },
@@ -166,7 +166,10 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path):
 def match_irl_clip(vr_name: str, irl_files: list[dict], player_key: str) -> dict | None:
     """Find the IRL clip that matches a VR clip by name."""
     # VR clip: layup_001.mp4 → look for carrington_layup_001.mp4
-    base = Path(vr_name).stem  # e.g. layup_001
+    # Strip all extensions to get base name (handles double .mp4.mp4)
+    base = vr_name
+    while Path(base).suffix:
+        base = Path(base).stem
     for f in irl_files:
         if f["name"].startswith(f"{player_key}_") and base in f["name"]:
             return f
