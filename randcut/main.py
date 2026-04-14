@@ -104,7 +104,7 @@ def normalize_clip(input_path: Path, output_path: Path, width: int = 720, height
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
-        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black",
+        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
         "-an",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-threads", "1",
