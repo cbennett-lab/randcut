@@ -20,27 +20,33 @@ app.add_middleware(
 )
 
 # ─────────────────────────────────────────────
-# WOW MOMENT CATEGORIES
-# To add a new category, just add a new entry to this dict
-CATEGORIES = {
+# WOW MOMENT CATEGORIES — stacked 9:16 mode
+STACKED_CATEGORIES = {
     "layups": {
         "label": "My Best Layups",
-        "video_folder": "https://drive.google.com/drive/folders/1bmqiC7FCn534qzak0gv6ZKWFqvQzWrwr?usp=sharing",
-        "audio_folder": "https://drive.google.com/drive/folders/1gRwAUaSpGJfT2ZbjU6A6hqD5RHIrmtNG?usp=sharing",
-    },
-    "touchdowns": {
-        "label": "My Best Touchdown Catches",
-        "video_folder": "https://drive.google.com/drive/folders/1USBIKxJjDQkN86P-MGeIh_wdhFbdq_RB?usp=sharing",
-        "audio_folder": "https://drive.google.com/drive/folders/121VtEgQky0ByhBEqpmSXsnRhs7qTe9-T?usp=sharing",
+        "vr_folder":  "https://drive.google.com/drive/folders/1EsturKJfa-bSLcWQmDEinfDIwOQWBxZI?usp=sharing",
+        "music_file": "17jHoahZKgt-Evz-akGEEQVogqalnLnvA",  # Drive file ID
+        "players": {
+            "carrington": {
+                "display": "ImDominus",
+                "irl_folder": "https://drive.google.com/drive/folders/1GZ2crfsLuLVyb86l722nRwkbGMXcz6GS?usp=sharing",
+            }
+        }
     },
     "blocks": {
         "label": "My Best Blocks",
-        "video_folder": "https://drive.google.com/drive/folders/1HsIrTFdloN1uZ8WzUVFl_CjsCaqdO75e?usp=sharing",
-        "audio_folder": "https://drive.google.com/drive/folders/1tDTbsJ6_0RgZem-hQwkhf7_jDh7Pspyx?usp=sharing",
+        "vr_folder":  "https://drive.google.com/drive/folders/1RfllJXMc3q1YQENXcUyKahf8h3rMs51_?usp=sharing",
+        "music_file": "1FrdufGg3vpcwUibxv5wgM9EdBayeKW4Y",
+        "players": {
+            "carrington": {
+                "display": "ImDominus",
+                "irl_folder": "https://drive.google.com/drive/folders/1gMZ22YtOd-GSFJpia2piTGeimEJCfXEg?usp=sharing",
+            }
+        }
     },
 }
 
-NUM_CLIPS = 3
+NUM_PAIRS = 3
 # ─────────────────────────────────────────────
 
 OUTPUT_DIR = Path("outputs")
@@ -54,15 +60,14 @@ job_status = {}
 def extract_folder_id(link: str) -> str:
     match = re.search(r"/folders/([a-zA-Z0-9_-]+)", link)
     if not match:
-        raise ValueError("Could not parse folder ID from Drive link.")
+        raise ValueError(f"Could not parse folder ID from: {link}")
     return match.group(1)
 
 
 def list_drive_files(folder_id: str, mime_prefix: str) -> list[dict]:
     api_key = os.environ.get("GOOGLE_API_KEY", "")
     if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable not set. Add it in Railway.")
-
+        raise ValueError("GOOGLE_API_KEY not set in Railway environment variables.")
     url = "https://www.googleapis.com/drive/v3/files"
     params = {
         "q": f"'{folder_id}' in parents and mimeType contains '{mime_prefix}'",
@@ -72,40 +77,52 @@ def list_drive_files(folder_id: str, mime_prefix: str) -> list[dict]:
     }
     resp = requests.get(url, params=params, timeout=15)
     resp.raise_for_status()
-    files = resp.json().get("files", [])
-    return files
+    return resp.json().get("files", [])
 
 
 def download_drive_file(file_id: str, dest: Path):
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     session = requests.Session()
-    response = session.get(url, stream=True, timeout=120)
-
+    response = session.get(url, stream=True, timeout=180)
     token = None
     for key, value in response.cookies.items():
         if key.startswith("download_warning"):
             token = value
             break
     if token:
-        response = session.get(url, params={"confirm": token}, stream=True, timeout=120)
-
+        response = session.get(url, params={"confirm": token}, stream=True, timeout=180)
     with open(dest, "wb") as f:
         for chunk in response.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
 
 
-def process_clip(input_path: Path, output_path: Path):
+def normalize_clip(input_path: Path, output_path: Path, width: int = 720, height: int = 640):
+    """Re-encode a clip to exact dimensions, no audio, portrait-ready."""
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
+        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black",
         "-an",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "28",
-        "-vf", "scale=1280:-2",
-        "-movflags", "+faststart",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
         "-threads", "1",
+        "-movflags", "+faststart",
+        str(output_path)
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+
+def stack_clips(top_path: Path, bottom_path: Path, output_path: Path):
+    """Stack two clips vertically into 9:16 (720x1280)."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(top_path),
+        "-i", str(bottom_path),
+        "-filter_complex", "[0:v][1:v]vstack=inputs=2[v]",
+        "-map", "[v]",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-threads", "1",
+        "-movflags", "+faststart",
         str(output_path)
     ]
     subprocess.run(cmd, check=True, capture_output=True)
@@ -116,7 +133,6 @@ def concat_clips(clip_paths: list[Path], output_path: Path):
     with open(list_file, "w") as f:
         for p in clip_paths:
             f.write(f"file '{p.resolve()}'\n")
-
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0",
@@ -137,8 +153,7 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path):
         "-map", "0:v:0",
         "-map", "1:a:0",
         "-c:v", "copy",
-        "-c:a", "aac",
-        "-b:a", "192k",
+        "-c:a", "aac", "-b:a", "192k",
         "-shortest",
         "-movflags", "+faststart",
         str(output_path)
@@ -146,61 +161,85 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path):
     subprocess.run(cmd, check=True, capture_output=True)
 
 
-def run_pipeline(job_id: str, category_key: str):
+def match_irl_clip(vr_name: str, irl_files: list[dict], player_key: str) -> dict | None:
+    """Find the IRL clip that matches a VR clip by name."""
+    # VR clip: layup_001.mp4 → look for carrington_layup_001.mp4
+    base = Path(vr_name).stem  # e.g. layup_001
+    for f in irl_files:
+        if f["name"].startswith(f"{player_key}_") and base in f["name"]:
+            return f
+    return None
+
+
+def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_top: bool):
     temp_files = []
     try:
-        category = CATEGORIES[category_key]
+        cat = STACKED_CATEGORIES[category_key]
+        player = cat["players"][player_key]
+
         job_status[job_id].update({"status": "working", "message": "Connecting to Google Drive..."})
 
-        # Videos
-        video_folder_id = extract_folder_id(category["video_folder"])
-        all_videos = list_drive_files(video_folder_id, "video/")
-        if not all_videos:
-            raise ValueError("No video files found in the video Drive folder.")
-        if len(all_videos) < NUM_CLIPS:
-            raise ValueError(f"Only {len(all_videos)} videos in folder — need at least {NUM_CLIPS}.")
+        # List VR clips
+        vr_folder_id = extract_folder_id(cat["vr_folder"])
+        vr_files = list_drive_files(vr_folder_id, "video/")
+        if not vr_files:
+            raise ValueError("No VR clips found in the gameplay folder.")
 
-        # Audio
-        audio_folder_id = extract_folder_id(category["audio_folder"])
-        all_audio = list_drive_files(audio_folder_id, "audio/")
-        if not all_audio:
-            raise ValueError("No audio files found in the audio Drive folder.")
+        # List IRL clips
+        irl_folder_id = extract_folder_id(player["irl_folder"])
+        irl_files = list_drive_files(irl_folder_id, "video/")
+        if not irl_files:
+            raise ValueError("No IRL clips found for this player.")
 
-        chosen_videos = random.sample(all_videos, NUM_CLIPS)
-        chosen_audio  = random.choice(all_audio)
+        # Find matched pairs
+        matched_pairs = []
+        for vr in vr_files:
+            irl = match_irl_clip(vr["name"], irl_files, player_key)
+            if irl:
+                matched_pairs.append((vr, irl))
 
-        clip_names = [v["name"] for v in chosen_videos]
-        job_status[job_id]["clips_used"] = clip_names
-        job_status[job_id]["message"] = f"Selected {NUM_CLIPS} clips + audio: {chosen_audio['name']}"
+        if len(matched_pairs) < NUM_PAIRS:
+            raise ValueError(f"Only {len(matched_pairs)} matched pairs found — need at least {NUM_PAIRS}. Check filenames match.")
 
-        # Download & process clips
-        processed = []
-        for i, video in enumerate(chosen_videos):
-            job_status[job_id]["message"] = f"Downloading clip {i+1}/{NUM_CLIPS}: {video['name']}"
-            raw  = TEMP_DIR / f"{job_id}_{i}_raw.mp4"
-            proc = TEMP_DIR / f"{job_id}_{i}_proc.mp4"
-            temp_files += [raw, proc]
+        chosen_pairs = random.sample(matched_pairs, NUM_PAIRS)
+        pair_names = [f"{vr['name']} + {irl['name']}" for vr, irl in chosen_pairs]
+        job_status[job_id]["clips_used"] = pair_names
+        job_status[job_id]["message"] = f"Found {len(matched_pairs)} pairs. Downloading {NUM_PAIRS}..."
 
-            download_drive_file(video["id"], raw)
+        stacked_clips = []
+        for i, (vr, irl) in enumerate(chosen_pairs):
+            job_status[job_id]["message"] = f"Downloading pair {i+1}/{NUM_PAIRS}..."
 
-            job_status[job_id]["message"] = f"Processing clip {i+1}/{NUM_CLIPS}..."
-            process_clip(raw, proc)
-            processed.append(proc)
+            vr_raw  = TEMP_DIR / f"{job_id}_{i}_vr_raw.mp4"
+            irl_raw = TEMP_DIR / f"{job_id}_{i}_irl_raw.mp4"
+            vr_norm  = TEMP_DIR / f"{job_id}_{i}_vr_norm.mp4"
+            irl_norm = TEMP_DIR / f"{job_id}_{i}_irl_norm.mp4"
+            stacked  = TEMP_DIR / f"{job_id}_{i}_stacked.mp4"
+            temp_files += [vr_raw, irl_raw, vr_norm, irl_norm, stacked]
 
-        # Stitch
-        job_status[job_id]["message"] = "Stitching clips together..."
+            download_drive_file(vr["id"], vr_raw)
+            download_drive_file(irl["id"], irl_raw)
+
+            job_status[job_id]["message"] = f"Processing pair {i+1}/{NUM_PAIRS}..."
+            normalize_clip(vr_raw, vr_norm)
+            normalize_clip(irl_raw, irl_norm)
+
+            top  = vr_norm  if vr_on_top else irl_norm
+            bot  = irl_norm if vr_on_top else vr_norm
+            stack_clips(top, bot, stacked)
+            stacked_clips.append(stacked)
+
+        job_status[job_id]["message"] = "Stitching all pairs together..."
         silent_video = TEMP_DIR / f"{job_id}_silent.mp4"
         temp_files.append(silent_video)
-        concat_clips(processed, silent_video)
+        concat_clips(stacked_clips, silent_video)
 
-        # Download audio
-        job_status[job_id]["message"] = f"Downloading audio: {chosen_audio['name']}..."
+        job_status[job_id]["message"] = "Downloading music..."
         audio_path = TEMP_DIR / f"{job_id}_audio"
         temp_files.append(audio_path)
-        download_drive_file(chosen_audio["id"], audio_path)
+        download_drive_file(cat["music_file"], audio_path)
 
-        # Mix
-        job_status[job_id]["message"] = "Adding audio track..."
+        job_status[job_id]["message"] = "Adding music..."
         out_name = f"{job_id}_final.mp4"
         add_audio(silent_video, audio_path, OUTPUT_DIR / out_name)
 
@@ -208,7 +247,6 @@ def run_pipeline(job_id: str, category_key: str):
 
     except Exception as e:
         job_status[job_id].update({"status": "error", "message": str(e)})
-
     finally:
         for f in temp_files:
             try:
@@ -217,21 +255,30 @@ def run_pipeline(job_id: str, category_key: str):
                 pass
 
 
-@app.get("/categories")
-async def get_categories():
-    return [{"key": k, "label": v["label"]} for k, v in CATEGORIES.items()]
+@app.get("/stacked-categories")
+async def get_stacked_categories():
+    result = []
+    for key, cat in STACKED_CATEGORIES.items():
+        players = [{"key": pk, "display": pv["display"]} for pk, pv in cat["players"].items()]
+        result.append({"key": key, "label": cat["label"], "players": players})
+    return result
 
 
-@app.post("/generate")
-async def generate(request: Request, background_tasks: BackgroundTasks):
+@app.post("/generate-stacked")
+async def generate_stacked(request: Request, background_tasks: BackgroundTasks):
     body = await request.json()
     category_key = body.get("category")
-    if category_key not in CATEGORIES:
+    player_key   = body.get("player")
+    vr_on_top    = body.get("vr_on_top", True)
+
+    if category_key not in STACKED_CATEGORIES:
         return JSONResponse(status_code=400, content={"error": f"Unknown category: {category_key}"})
+    if player_key not in STACKED_CATEGORIES[category_key]["players"]:
+        return JSONResponse(status_code=400, content={"error": f"Unknown player: {player_key}"})
 
     job_id = str(uuid.uuid4())[:8]
     job_status[job_id] = {"status": "queued", "message": "Starting...", "file": None, "clips_used": []}
-    background_tasks.add_task(run_pipeline, job_id, category_key)
+    background_tasks.add_task(run_stacked_pipeline, job_id, category_key, player_key, vr_on_top)
     return {"job_id": job_id}
 
 
