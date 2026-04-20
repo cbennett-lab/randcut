@@ -30,6 +30,10 @@ STACKED_CATEGORIES = {
             "carrington": {
                 "display": "ImDominus",
                 "irl_folder": "https://drive.google.com/drive/folders/1etk_aVDZwfMKdmIeXJO_jhPge6f7G1tK?usp=sharing",
+            },
+            "elara": {
+                "display": "Elara",
+                "irl_folder": "https://drive.google.com/drive/folders/1QYAxzIa6bAba1QeVomFKLyhMV2r3Ov58?usp=sharing",
             }
         }
     },
@@ -41,6 +45,10 @@ STACKED_CATEGORIES = {
             "carrington": {
                 "display": "ImDominus",
                 "irl_folder": "https://drive.google.com/drive/folders/1BiBbEo8dTOrEVwJtXR9Al8MTsojGI-wn?usp=sharing",
+            },
+            "elara": {
+                "display": "Elara",
+                "irl_folder": "https://drive.google.com/drive/folders/1EMT94fmPCE-ZlFf6R-kyyYkuL_XYGxqW?usp=sharing",
             }
         }
     },
