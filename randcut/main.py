@@ -1,6 +1,6 @@
 from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess
 import uuid
@@ -23,6 +23,7 @@ app.add_middleware(
 # WOW MOMENT CATEGORIES — auto-populated from Drive
 MAIN_DRIVE_FOLDER_ID = "1wsEs_t4F3SqdKtGLiYLtIUrfvIll0Ldr"  # Main folder
 STACKED_CATEGORIES = {}
+PLAYER_IMAGE_IDS = {}
 
 NUM_PAIRS = 3
 # ─────────────────────────────────────────────
@@ -83,14 +84,26 @@ def folder_id_to_url(folder_id: str) -> str:
 
 
 def populate_stacked_categories():
-    """Auto-populate STACKED_CATEGORIES from the main Drive folder structure."""
-    global STACKED_CATEGORIES
+    """Auto-populate STACKED_CATEGORIES and PLAYER_IMAGE_IDS from the main Drive folder structure."""
+    global STACKED_CATEGORIES, PLAYER_IMAGE_IDS
     api_key = os.environ.get("GOOGLE_API_KEY", "")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY not set in Railway environment variables.")
-    
+
     # List top-level folders (categories) in the main folder
     category_folders = list_drive_files(MAIN_DRIVE_FOLDER_ID, "application/vnd.google-apps.folder")
+
+    # Populate player images from _Character Images folder
+    new_image_ids = {}
+    char_folder = next((f for f in category_folders if f["name"] == "_Character Images"), None)
+    if char_folder:
+        player_img_folders = list_drive_files(char_folder["id"], "application/vnd.google-apps.folder")
+        for pf in player_img_folders:
+            player_key = pf["name"].lower().replace(" ", "_")
+            files = list_drive_files(pf["id"], "image/")
+            if files:
+                new_image_ids[player_key] = files[0]["id"]
+    PLAYER_IMAGE_IDS = new_image_ids
     
     for cat_folder in category_folders:
         # Skip folders starting with "_"
@@ -333,6 +346,19 @@ async def get_stacked_categories():
         players = [{"key": pk, "display": pv["display"]} for pk, pv in cat["players"].items()]
         result.append({"key": key, "label": cat["label"], "players": players})
     return result
+
+
+@app.get("/player-image/{player_key}")
+async def get_player_image(player_key: str):
+    if player_key not in PLAYER_IMAGE_IDS:
+        return JSONResponse(status_code=404, content={"error": "No image for this player"})
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    file_id = PLAYER_IMAGE_IDS[player_key]
+    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
+    resp = requests.get(url, stream=True, timeout=30)
+    resp.raise_for_status()
+    content_type = resp.headers.get("content-type", "image/jpeg")
+    return StreamingResponse(resp.iter_content(chunk_size=65536), media_type=content_type)
 
 
 @app.post("/generate-stacked")
