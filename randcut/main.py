@@ -107,30 +107,46 @@ def download_drive_file(file_id: str, dest: Path):
                 f.write(chunk)
 
 
-def normalize_clip(input_path: Path, output_path: Path, width: int = 720, height: int = 640):
-    """Re-encode a clip to exact dimensions, no audio, portrait-ready."""
+def get_video_duration(file_path: Path) -> float:
+    """Get duration of a video file in seconds using ffprobe."""
     cmd = [
-        "ffmpeg", "-y",
-        "-i", str(input_path),
-        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
-        "-an",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-        "-threads", "1",
-        "-movflags", "+faststart",
-        str(output_path)
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1:nokey=1",
+        str(file_path)
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return float(result.stdout.strip())
 
 
-def stack_clips(top_path: Path, bottom_path: Path, output_path: Path):
-    """Stack two clips vertically into 9:16 (720x1280)."""
+def stack_clips_from_raw(vr_raw_path: Path, irl_raw_path: Path, output_path: Path, vr_on_top: bool = True):
+    """Normalize and stack two raw clips in a single encoding pass, trimmed to shorter duration."""
+    # Get durations and use the shorter one
+    vr_duration = get_video_duration(vr_raw_path)
+    irl_duration = get_video_duration(irl_raw_path)
+    min_duration = min(vr_duration, irl_duration)
+    
+    if vr_on_top:
+        filter_str = (
+            f"[0:v]fps=60,trim=duration={min_duration},scale=2160:2160:force_original_aspect_ratio=increase,crop=2160:2160[vr];"
+            f"[1:v]fps=60,trim=duration={min_duration},scale=2160:1680:force_original_aspect_ratio=increase,crop=2160:1680[irl];"
+            "[vr][irl]vstack=inputs=2[v]"
+        )
+    else:
+        filter_str = (
+            f"[0:v]fps=60,trim=duration={min_duration},scale=2160:2160:force_original_aspect_ratio=increase,crop=2160:2160[vr];"
+            f"[1:v]fps=60,trim=duration={min_duration},scale=2160:1680:force_original_aspect_ratio=increase,crop=2160:1680[irl];"
+            "[irl][vr]vstack=inputs=2[v]"
+        )
+    
     cmd = [
         "ffmpeg", "-y",
-        "-i", str(top_path),
-        "-i", str(bottom_path),
-        "-filter_complex", "[0:v][1:v]vstack=inputs=2[v]",
+        "-i", str(vr_raw_path),
+        "-i", str(irl_raw_path),
+        "-filter_complex", filter_str,
         "-map", "[v]",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-an",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
         "-threads", "1",
         "-movflags", "+faststart",
         str(output_path)
@@ -225,21 +241,14 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
 
             vr_raw  = TEMP_DIR / f"{job_id}_{i}_vr_raw.mp4"
             irl_raw = TEMP_DIR / f"{job_id}_{i}_irl_raw.mp4"
-            vr_norm  = TEMP_DIR / f"{job_id}_{i}_vr_norm.mp4"
-            irl_norm = TEMP_DIR / f"{job_id}_{i}_irl_norm.mp4"
             stacked  = TEMP_DIR / f"{job_id}_{i}_stacked.mp4"
-            temp_files += [vr_raw, irl_raw, vr_norm, irl_norm, stacked]
+            temp_files += [vr_raw, irl_raw, stacked]
 
             download_drive_file(vr["id"], vr_raw)
             download_drive_file(irl["id"], irl_raw)
 
             job_status[job_id]["message"] = f"Processing pair {i+1}/{NUM_PAIRS}..."
-            normalize_clip(vr_raw, vr_norm)
-            normalize_clip(irl_raw, irl_norm)
-
-            top  = vr_norm  if vr_on_top else irl_norm
-            bot  = irl_norm if vr_on_top else vr_norm
-            stack_clips(top, bot, stacked)
+            stack_clips_from_raw(vr_raw, irl_raw, stacked, vr_on_top)
             stacked_clips.append(stacked)
 
         job_status[job_id]["message"] = "Stitching all pairs together..."
