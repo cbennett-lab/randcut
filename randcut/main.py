@@ -20,39 +20,9 @@ app.add_middleware(
 )
 
 # ─────────────────────────────────────────────
-# WOW MOMENT CATEGORIES — stacked 9:16 mode
-STACKED_CATEGORIES = {
-    "layups": {
-        "label": "My Best Layups",
-        "vr_folder":  "https://drive.google.com/drive/folders/1EsturKJfa-bSLcWQmDEinfDIwOQWBxZI?usp=sharing",
-        "music_file": "17jHoahZKgt-Evz-akGEEQVogqalnLnvA",  # Drive file ID
-        "players": {
-            "carrington": {
-                "display": "ImDominus",
-                "irl_folder": "https://drive.google.com/drive/folders/1etk_aVDZwfMKdmIeXJO_jhPge6f7G1tK?usp=sharing",
-            },
-            "elara": {
-                "display": "Elara",
-                "irl_folder": "https://drive.google.com/drive/folders/1QYAxzIa6bAba1QeVomFKLyhMV2r3Ov58?usp=sharing",
-            }
-        }
-    },
-    "blocks": {
-        "label": "My Best Blocks",
-        "vr_folder":  "https://drive.google.com/drive/folders/1RfllJXMc3q1YQENXcUyKahf8h3rMs51_?usp=sharing",
-        "music_file": "1FrdufGg3vpcwUibxv5wgM9EdBayeKW4Y",
-        "players": {
-            "carrington": {
-                "display": "ImDominus",
-                "irl_folder": "https://drive.google.com/drive/folders/1BiBbEo8dTOrEVwJtXR9Al8MTsojGI-wn?usp=sharing",
-            },
-            "elara": {
-                "display": "Elara",
-                "irl_folder": "https://drive.google.com/drive/folders/1EMT94fmPCE-ZlFf6R-kyyYkuL_XYGxqW?usp=sharing",
-            }
-        }
-    },
-}
+# WOW MOMENT CATEGORIES — auto-populated from Drive
+MAIN_DRIVE_FOLDER_ID = "1wsEs_t4F3SqdKtGLiYLtIUrfvIll0Ldr"  # Main folder
+STACKED_CATEGORIES = {}
 
 NUM_PAIRS = 3
 # ─────────────────────────────────────────────
@@ -105,6 +75,70 @@ def download_drive_file(file_id: str, dest: Path):
         for chunk in response.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
+
+
+def folder_id_to_url(folder_id: str) -> str:
+    """Convert a Google Drive folder ID to a shareable folder URL."""
+    return f"https://drive.google.com/drive/folders/{folder_id}?usp=sharing"
+
+
+def populate_stacked_categories():
+    """Auto-populate STACKED_CATEGORIES from the main Drive folder structure."""
+    global STACKED_CATEGORIES
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY not set in Railway environment variables.")
+    
+    # List top-level folders (categories) in the main folder
+    category_folders = list_drive_files(MAIN_DRIVE_FOLDER_ID, "application/vnd.google-apps.folder")
+    
+    for cat_folder in category_folders:
+        # Skip folders starting with "_"
+        if cat_folder["name"].startswith("_"):
+            continue
+        
+        cat_key = cat_folder["name"].lower().replace(" ", "_")
+        cat_id = cat_folder["id"]
+        cat_label = cat_folder["name"]
+        
+        # List subfolders in this category (Gameplay, Music, IRL)
+        subfolders = list_drive_files(cat_id, "application/vnd.google-apps.folder")
+        subfolder_map = {f["name"]: f["id"] for f in subfolders}
+        
+        # Get VR folder
+        vr_folder_id = subfolder_map.get("Gameplay")
+        if not vr_folder_id:
+            continue
+        vr_url = folder_id_to_url(vr_folder_id)
+        
+        # Get music file (first file in Music folder)
+        music_file_id = None
+        if "Music" in subfolder_map:
+            music_files = list_drive_files(subfolder_map["Music"], "")
+            if music_files:
+                music_file_id = music_files[0]["id"]
+        
+        if not music_file_id:
+            continue
+        
+        # Get players from IRL folder
+        players = {}
+        if "IRL" in subfolder_map:
+            player_folders = list_drive_files(subfolder_map["IRL"], "application/vnd.google-apps.folder")
+            for pf in player_folders:
+                player_key = pf["name"].lower().replace(" ", "_")
+                players[player_key] = {
+                    "display": pf["name"],
+                    "irl_folder": folder_id_to_url(pf["id"]),
+                }
+        
+        if players:
+            STACKED_CATEGORIES[cat_key] = {
+                "label": cat_label,
+                "vr_folder": vr_url,
+                "music_file": music_file_id,
+                "players": players,
+            }
 
 
 def get_video_duration(file_path: Path) -> float:
@@ -188,14 +222,16 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path):
 
 
 def match_irl_clip(vr_name: str, irl_files: list[dict], player_key: str) -> dict | None:
-    """Find the IRL clip that matches a VR clip by name."""
-    # VR clip: layup_001.mp4 → look for carrington_layup_001.mp4
-    # Strip all extensions to get base name (handles double .mp4.mp4)
-    base = vr_name
-    while Path(base).suffix:
-        base = Path(base).stem
+    """Find the IRL clip that matches a VR clip by the 3-digit number in the filename."""
+    # Extract 3-digit number from VR clip name (e.g., 001 from "layup_001.mp4")
+    match = re.search(r"(\d{3})", vr_name)
+    if not match:
+        return None
+    vr_number = match.group(1)
+    
+    # Find IRL clip with the same 3-digit number
     for f in irl_files:
-        if f["name"].startswith(f"{player_key}_") and base in f["name"]:
+        if vr_number in f["name"]:
             return f
     return None
 
@@ -275,6 +311,15 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
                 f.unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Populate categories from Drive on app startup."""
+    try:
+        populate_stacked_categories()
+    except Exception as e:
+        print(f"Warning: Could not auto-populate categories from Drive: {e}")
 
 
 @app.get("/stacked-categories")
