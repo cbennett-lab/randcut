@@ -324,6 +324,10 @@ async def startup_event():
 
 @app.get("/stacked-categories")
 async def get_stacked_categories():
+    try:
+        populate_stacked_categories()
+    except Exception as e:
+        print(f"Warning: Could not refresh categories from Drive: {e}")
     result = []
     for key, cat in STACKED_CATEGORIES.items():
         players = [{"key": pk, "display": pv["display"]} for pk, pv in cat["players"].items()]
