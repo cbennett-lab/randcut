@@ -175,7 +175,7 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path):
     cmd = [
         "ffmpeg", "-y",
         "-i", str(video_path),
-        "-i", str(audio_path),
+        "-f", "mp3", "-i", str(audio_path),
         "-map", "0:v:0",
         "-map", "1:a:0",
         "-c:v", "copy",
@@ -257,7 +257,7 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
         concat_clips(stacked_clips, silent_video)
 
         job_status[job_id]["message"] = "Downloading music..."
-        audio_path = TEMP_DIR / f"{job_id}_audio"
+        audio_path = TEMP_DIR / f"{job_id}_audio.mp3"
         temp_files.append(audio_path)
         download_drive_file(cat["music_file"], audio_path)
 
