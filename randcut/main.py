@@ -1,6 +1,6 @@
 from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess
 import uuid
@@ -8,6 +8,7 @@ import os
 import random
 import re
 import requests
+import threading
 from pathlib import Path
 
 app = FastAPI()
@@ -24,6 +25,7 @@ app.add_middleware(
 MAIN_DRIVE_FOLDER_ID = "1wsEs_t4F3SqdKtGLiYLtIUrfvIll0Ldr"  # Main folder
 STACKED_CATEGORIES = {}
 PLAYER_IMAGE_IDS = {}
+PLAYER_IMAGE_CACHE = {}  # player_key -> (bytes, content_type)
 
 TITLE_FONT_FILE = str(Path(__file__).parent / "static" / "HelveticaNeueLTProHvCn.otf")
 
@@ -154,6 +156,24 @@ def populate_stacked_categories():
                 "music_file": music_file_id,
                 "players": players,
             }
+
+
+def prefetch_player_images():
+    """Download all player images into memory so they serve instantly."""
+    global PLAYER_IMAGE_CACHE
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    new_cache = {}
+    for player_key, file_id in PLAYER_IMAGE_IDS.items():
+        try:
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            new_cache[player_key] = (resp.content, resp.headers.get("content-type", "image/jpeg"))
+            print(f"Cached player image: {player_key}")
+        except Exception as e:
+            print(f"Warning: Could not cache image for {player_key}: {e}")
+    PLAYER_IMAGE_CACHE = new_cache
+    print(f"Player image cache ready: {len(new_cache)} images")
 
 
 def get_video_duration(file_path: Path) -> float:
@@ -345,6 +365,7 @@ async def startup_event():
     """Populate categories from Drive on app startup."""
     try:
         populate_stacked_categories()
+        threading.Thread(target=prefetch_player_images, daemon=True).start()
     except Exception as e:
         print(f"Warning: Could not auto-populate categories from Drive: {e}")
 
@@ -353,6 +374,7 @@ async def startup_event():
 async def get_stacked_categories():
     try:
         populate_stacked_categories()
+        threading.Thread(target=prefetch_player_images, daemon=True).start()
     except Exception as e:
         print(f"Warning: Could not refresh categories from Drive: {e}")
     result = []
@@ -366,6 +388,9 @@ async def get_stacked_categories():
 async def get_player_image(player_key: str):
     if player_key not in PLAYER_IMAGE_IDS:
         return JSONResponse(status_code=404, content={"error": "No image for this player"})
+    if player_key in PLAYER_IMAGE_CACHE:
+        content, content_type = PLAYER_IMAGE_CACHE[player_key]
+        return Response(content=content, media_type=content_type)
     api_key = os.environ.get("GOOGLE_API_KEY", "")
     file_id = PLAYER_IMAGE_IDS[player_key]
     url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
