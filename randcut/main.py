@@ -25,6 +25,8 @@ MAIN_DRIVE_FOLDER_ID = "1wsEs_t4F3SqdKtGLiYLtIUrfvIll0Ldr"  # Main folder
 STACKED_CATEGORIES = {}
 PLAYER_IMAGE_IDS = {}
 
+TITLE_FONT_FILE = str(Path(__file__).parent / "static" / "HelveticaNeueLTProHvCn.otf")
+
 NUM_PAIRS = 3
 # ─────────────────────────────────────────────
 
@@ -193,7 +195,7 @@ def stack_clips_from_raw(vr_raw_path: Path, irl_raw_path: Path, output_path: Pat
         "-filter_complex", filter_str,
         "-map", "[v]",
         "-an",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "16",
         "-threads", "1",
         "-movflags", "+faststart",
         str(output_path)
@@ -218,19 +220,29 @@ def concat_clips(clip_paths: list[Path], output_path: Path):
     list_file.unlink(missing_ok=True)
 
 
-def add_audio(video_path: Path, audio_path: Path, output_path: Path):
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(video_path),
-        "-f", "mp3", "-i", str(audio_path),
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "copy",
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
-        "-movflags", "+faststart",
-        str(output_path)
-    ]
+def add_audio(video_path: Path, audio_path: Path, output_path: Path,
+              title: str = "", cut_y: int = 2160):
+    cmd = ["ffmpeg", "-y", "-i", str(video_path), "-f", "mp3", "-i", str(audio_path),
+           "-map", "0:v:0", "-map", "1:a:0"]
+
+    if title:
+        safe = title.replace("'", "’").replace("\\", "\\\\").replace(":", "\\:")
+        font_part = f"fontfile='{TITLE_FONT_FILE}':" if TITLE_FONT_FILE else "font='Helvetica Neue':"
+        drawtext = (
+            f"drawtext={font_part}"
+            f"text='{safe}':"
+            f"fontsize=140:"
+            f"fontcolor=white:"
+            f"borderw=8:"
+            f"bordercolor=black:"
+            f"x=(w-tw)/2:"
+            f"y={cut_y}-th/2"
+        )
+        cmd += ["-vf", drawtext, "-c:v", "libx264", "-preset", "fast", "-crf", "22"]
+    else:
+        cmd += ["-c:v", "copy"]
+
+    cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(output_path)]
     subprocess.run(cmd, check=True, capture_output=True)
 
 
@@ -310,9 +322,11 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
         temp_files.append(audio_path)
         download_drive_file(cat["music_file"], audio_path)
 
-        job_status[job_id]["message"] = "Adding music..."
+        job_status[job_id]["message"] = "Adding music and title..."
         out_name = f"{job_id}_final.mp4"
-        add_audio(silent_video, audio_path, OUTPUT_DIR / out_name)
+        title = cat["label"].upper() + " IN VR"
+        cut_y = 2160 if vr_on_top else 1680
+        add_audio(silent_video, audio_path, OUTPUT_DIR / out_name, title, cut_y)
 
         job_status[job_id].update({"status": "done", "message": "Ready!", "file": out_name})
 
