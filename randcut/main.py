@@ -109,35 +109,36 @@ def populate_stacked_categories():
                 new_image_ids[player_key] = files[0]["id"]
     PLAYER_IMAGE_IDS = new_image_ids
     
+    new_categories = {}
     for cat_folder in category_folders:
         # Skip folders starting with "_"
         if cat_folder["name"].startswith("_"):
             continue
-        
+
         cat_key = cat_folder["name"].lower().replace(" ", "_")
         cat_id = cat_folder["id"]
         cat_label = cat_folder["name"]
-        
+
         # List subfolders in this category (Gameplay, Music, IRL)
         subfolders = list_drive_files(cat_id, "application/vnd.google-apps.folder")
         subfolder_map = {f["name"]: f["id"] for f in subfolders}
-        
+
         # Get VR folder
         vr_folder_id = subfolder_map.get("Gameplay")
         if not vr_folder_id:
             continue
         vr_url = folder_id_to_url(vr_folder_id)
-        
+
         # Get music file (first file in Music folder)
         music_file_id = None
         if "Music" in subfolder_map:
             music_files = list_drive_files(subfolder_map["Music"], "")
             if music_files:
                 music_file_id = music_files[0]["id"]
-        
+
         if not music_file_id:
             continue
-        
+
         # Get players from IRL folder
         players = {}
         if "IRL" in subfolder_map:
@@ -148,14 +149,15 @@ def populate_stacked_categories():
                     "display": pf["name"],
                     "irl_folder": folder_id_to_url(pf["id"]),
                 }
-        
+
         if players:
-            STACKED_CATEGORIES[cat_key] = {
+            new_categories[cat_key] = {
                 "label": cat_label,
                 "vr_folder": vr_url,
                 "music_file": music_file_id,
                 "players": players,
             }
+    STACKED_CATEGORIES = new_categories
 
 
 def prefetch_player_images():
