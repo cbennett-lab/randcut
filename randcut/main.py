@@ -198,13 +198,13 @@ def stack_clips_from_raw(vr_raw_path: Path, irl_raw_path: Path, output_path: Pat
     if vr_on_top:
         filter_str = (
             f"[0:v]fps=60,trim=duration={min_duration},scale=2160:2160:force_original_aspect_ratio=increase,crop=2160:2160[vr];"
-            f"[1:v]fps=60,trim=duration={min_duration},scale=2160:1680:force_original_aspect_ratio=increase,crop=2160:1680[irl];"
+            f"[1:v]fps=60,trim=duration={min_duration},scale=2160:1680:force_original_aspect_ratio=increase,crop=2160:1680:0:0[irl];"
             "[vr][irl]vstack=inputs=2[v]"
         )
     else:
         filter_str = (
             f"[0:v]fps=60,trim=duration={min_duration},scale=2160:2160:force_original_aspect_ratio=increase,crop=2160:2160[vr];"
-            f"[1:v]fps=60,trim=duration={min_duration},scale=2160:1680:force_original_aspect_ratio=increase,crop=2160:1680[irl];"
+            f"[1:v]fps=60,trim=duration={min_duration},scale=2160:1680:force_original_aspect_ratio=increase,crop=2160:1680:0:0[irl];"
             "[irl][vr]vstack=inputs=2[v]"
         )
     
@@ -343,7 +343,12 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
         download_drive_file(cat["music_file"], audio_path)
 
         job_status[job_id]["message"] = "Adding music and title..."
-        out_name = f"{job_id}_final.mp4"
+        last_cat_word = cat["label"].split()[-1].lower()
+        clip_nums = ""
+        for vr, _ in chosen_pairs:
+            m = re.search(r"(\d{3})", vr["name"])
+            clip_nums += f"{int(m.group(1)):02d}" if m else "00"
+        out_name = f"{player_key}_{last_cat_word}_{clip_nums}.mp4"
         title = cat["label"].upper() + " IN VR"
         cut_y = 2160 if vr_on_top else 1680
         add_audio(silent_video, audio_path, OUTPUT_DIR / out_name, title, cut_y)
