@@ -242,25 +242,70 @@ def concat_clips(clip_paths: list[Path], output_path: Path):
     list_file.unlink(missing_ok=True)
 
 
+TITLE_FONT_SIZE = 140
+
+def wrap_title(text: str, frame_width: int = 2160, max_fraction: float = 0.7, font_size: int = TITLE_FONT_SIZE) -> list[str]:
+    """Word-wrap text into lines fitting within max_fraction of frame width."""
+    avg_char_w = font_size * 0.52
+    space_w = font_size * 0.25
+    max_w = frame_width * max_fraction
+
+    words = text.split()
+    lines = []
+    current: list[str] = []
+    width = 0.0
+
+    for word in words:
+        word_w = len(word) * avg_char_w
+        gap = space_w if current else 0.0
+        if current and width + gap + word_w > max_w:
+            lines.append(" ".join(current))
+            current = [word]
+            width = word_w
+        else:
+            current.append(word)
+            width += gap + word_w
+
+    if current:
+        lines.append(" ".join(current))
+
+    return lines
+
+
 def add_audio(video_path: Path, audio_path: Path, output_path: Path,
               title: str = "", cut_y: int = 2160):
     cmd = ["ffmpeg", "-y", "-i", str(video_path), "-f", "mp3", "-i", str(audio_path),
            "-map", "0:v:0", "-map", "1:a:0"]
 
     if title:
-        safe = title.replace("'", "’").replace("\\", "\\\\").replace(":", "\\:")
-        font_part = f"fontfile='{TITLE_FONT_FILE}':" if TITLE_FONT_FILE else "font='Helvetica Neue':"
-        drawtext = (
-            f"drawtext={font_part}"
-            f"text='{safe}':"
-            f"fontsize=140:"
-            f"fontcolor=white:"
-            f"borderw=8:"
-            f"bordercolor=black:"
-            f"x=(w-tw)/2:"
-            f"y={cut_y}-th/2"
-        )
-        cmd += ["-vf", drawtext, "-c:v", "libx264", "-preset", "fast", "-crf", "22"]
+        clean_title = re.sub(r"[^\x20-\x7E]", "", title).strip()
+        lines = wrap_title(clean_title)
+
+        font_size = TITLE_FONT_SIZE
+        cap_height = int(font_size * 0.72)  # uppercase glyphs are ~72% of font size
+        line_gap = cap_height + 25          # cap height + 25px visual gap between lines
+        total_h = cap_height + (len(lines) - 1) * line_gap
+        first_y = cut_y - total_h // 2
+
+        font_path = Path(TITLE_FONT_FILE)
+        font_part = f"fontfile={TITLE_FONT_FILE}:" if font_path.exists() else ""
+
+        dt_filters = []
+        for i, line in enumerate(lines):
+            safe = line.replace("\\", "\\\\").replace(":", "\\:")
+            y = first_y + i * line_gap
+            dt_filters.append(
+                f"drawtext={font_part}"
+                f"text={safe}:"
+                f"fontsize={font_size}:"
+                f"fontcolor=white:"
+                f"borderw=8:"
+                f"bordercolor=black:"
+                f"x=(w-tw)/2:"
+                f"y={y}"
+            )
+
+        cmd += ["-vf", ",".join(dt_filters), "-c:v", "libx264", "-preset", "fast", "-crf", "22"]
     else:
         cmd += ["-c:v", "copy"]
 
