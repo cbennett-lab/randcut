@@ -30,6 +30,7 @@ PLAYER_IMAGE_CACHE = {}  # player_key -> (bytes, content_type)
 TITLE_FONT_FILE = str(Path(__file__).parent / "static" / "HelveticaNeueLTProHvCn.otf")
 
 NUM_PAIRS = 3
+CROSSFADE_SEC = 2.0
 # ─────────────────────────────────────────────
 
 OUTPUT_DIR = Path("outputs")
@@ -82,8 +83,15 @@ def download_drive_file(file_id: str, dest: Path):
                 f.write(chunk)
 
 
+def read_drive_json(file_id: str) -> dict:
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def folder_id_to_url(folder_id: str) -> str:
-    """Convert a Google Drive folder ID to a shareable folder URL."""
     return f"https://drive.google.com/drive/folders/{folder_id}?usp=sharing"
 
 
@@ -94,10 +102,8 @@ def populate_stacked_categories():
     if not api_key:
         raise ValueError("GOOGLE_API_KEY not set in Railway environment variables.")
 
-    # List top-level folders (categories) in the main folder
     category_folders = list_drive_files(MAIN_DRIVE_FOLDER_ID, "application/vnd.google-apps.folder")
 
-    # Populate player images from _Character Images folder
     new_image_ids = {}
     char_folder = next((f for f in category_folders if f["name"] == "_Character Images"), None)
     if char_folder:
@@ -108,10 +114,11 @@ def populate_stacked_categories():
             if files:
                 new_image_ids[player_key] = files[0]["id"]
     PLAYER_IMAGE_IDS = new_image_ids
-    
+
     new_categories = {}
+    combo_pending = []  # processed after regular categories are known
+
     for cat_folder in category_folders:
-        # Skip folders starting with "_"
         if cat_folder["name"].startswith("_"):
             continue
 
@@ -119,17 +126,21 @@ def populate_stacked_categories():
         cat_id = cat_folder["id"]
         cat_label = cat_folder["name"]
 
-        # List subfolders in this category (Gameplay, Music, IRL)
         subfolders = list_drive_files(cat_id, "application/vnd.google-apps.folder")
         subfolder_map = {f["name"]: f["id"] for f in subfolders}
 
-        # Get VR folder
+        # A recipe.json file marks this as a combo category
+        cat_all_files = list_drive_files(cat_id, "")
+        recipe_file = next((f for f in cat_all_files if f["name"] == "recipe.json"), None)
+        if recipe_file:
+            combo_pending.append((cat_key, cat_label, recipe_file["id"], subfolder_map))
+            continue
+
         vr_folder_id = subfolder_map.get("Gameplay")
         if not vr_folder_id:
             continue
         vr_url = folder_id_to_url(vr_folder_id)
 
-        # Get music file (first file in Music folder)
         music_file_id = None
         if "Music" in subfolder_map:
             music_files = list_drive_files(subfolder_map["Music"], "")
@@ -139,7 +150,6 @@ def populate_stacked_categories():
         if not music_file_id:
             continue
 
-        # Get players from IRL folder
         players = {}
         if "IRL" in subfolder_map:
             player_folders = list_drive_files(subfolder_map["IRL"], "application/vnd.google-apps.folder")
@@ -157,6 +167,49 @@ def populate_stacked_categories():
                 "music_file": music_file_id,
                 "players": players,
             }
+
+    # Process combo categories now that all regular categories are loaded
+    for cat_key, cat_label, recipe_file_id, subfolder_map in combo_pending:
+        try:
+            recipe = read_drive_json(recipe_file_id)
+            segments = recipe.get("segments", [])
+
+            music_file_ids = []
+            if "Music" in subfolder_map:
+                music_files = list_drive_files(subfolder_map["Music"], "")
+                music_files.sort(key=lambda f: f["name"])
+                music_file_ids = [f["id"] for f in music_files]
+
+            if not music_file_ids:
+                print(f"Warning: no music files found for combo '{cat_label}'")
+                continue
+
+            common_players = None
+            valid = True
+            for seg in segments:
+                src_key = seg["source"].lower().replace(" ", "_")
+                if src_key not in new_categories:
+                    print(f"Warning: source '{seg['source']}' not found for combo '{cat_label}'")
+                    valid = False
+                    break
+                src_players = new_categories[src_key]["players"]
+                common_players = dict(src_players) if common_players is None else {
+                    k: v for k, v in common_players.items() if k in src_players
+                }
+
+            if not valid or not common_players:
+                continue
+
+            new_categories[cat_key] = {
+                "label": cat_label,
+                "type": "combo",
+                "recipe": recipe,
+                "music_files": music_file_ids,
+                "players": common_players,
+            }
+        except Exception as e:
+            print(f"Warning: Could not process combo '{cat_label}': {e}")
+
     STACKED_CATEGORIES = new_categories
 
 
@@ -179,7 +232,6 @@ def prefetch_player_images():
 
 
 def get_video_duration(file_path: Path) -> float:
-    """Get duration of a video file in seconds using ffprobe."""
     cmd = [
         "ffprobe", "-v", "error",
         "-show_entries", "format=duration",
@@ -192,11 +244,10 @@ def get_video_duration(file_path: Path) -> float:
 
 def stack_clips_from_raw(vr_raw_path: Path, irl_raw_path: Path, output_path: Path, vr_on_top: bool = True):
     """Normalize and stack two raw clips in a single encoding pass, trimmed to shorter duration."""
-    # Get durations and use the shorter one
     vr_duration = get_video_duration(vr_raw_path)
     irl_duration = get_video_duration(irl_raw_path)
     min_duration = min(vr_duration, irl_duration)
-    
+
     if vr_on_top:
         filter_str = (
             f"[0:v]fps=60,trim=duration={min_duration},scale=2160:2160:force_original_aspect_ratio=increase,crop=2160:2160[vr];"
@@ -209,7 +260,7 @@ def stack_clips_from_raw(vr_raw_path: Path, irl_raw_path: Path, output_path: Pat
             f"[1:v]fps=60,trim=duration={min_duration},scale=2160:1680:force_original_aspect_ratio=increase,crop=2160:1680:0:0[irl];"
             "[irl][vr]vstack=inputs=2[v]"
         )
-    
+
     cmd = [
         "ffmpeg", "-y",
         "-i", str(vr_raw_path),
@@ -240,6 +291,42 @@ def concat_clips(clip_paths: list[Path], output_path: Path):
     ]
     subprocess.run(cmd, check=True, capture_output=True)
     list_file.unlink(missing_ok=True)
+
+
+def build_crossfaded_audio(music_paths: list[Path], segment_durations: list[float], output_path: Path):
+    """Crossfade multiple music tracks so each transition aligns with the segment boundary."""
+    if len(music_paths) == 1:
+        cmd = ["ffmpeg", "-y", "-i", str(music_paths[0]), "-c:a", "copy", str(output_path)]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return
+
+    cf = CROSSFADE_SEC
+    inputs = []
+    for p in music_paths:
+        inputs += ["-i", str(p)]
+
+    filter_parts = []
+    # Trim each track. Non-last tracks get +cf seconds so acrossfade starts
+    # exactly at the segment boundary (acrossfade begins cf seconds before track end).
+    for i, dur in enumerate(segment_durations):
+        trim_dur = dur + cf if i < len(segment_durations) - 1 else dur
+        filter_parts.append(f"[{i}:a]atrim=duration={trim_dur:.3f},asetpts=PTS-STARTPTS[a{i}]")
+
+    prev = "[a0]"
+    for i in range(1, len(music_paths)):
+        out = "[aout]" if i == len(music_paths) - 1 else f"[amid{i}]"
+        filter_parts.append(f"{prev}[a{i}]acrossfade=d={cf}:c1=tri:c2=tri{out}")
+        prev = out if i < len(music_paths) - 1 else None
+
+    cmd = [
+        "ffmpeg", "-y",
+        *inputs,
+        "-filter_complex", ";".join(filter_parts),
+        "-map", "[aout]",
+        "-c:a", "libmp3lame", "-b:a", "192k",
+        str(output_path)
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
 
 
 TITLE_FONT_SIZE = 140
@@ -282,8 +369,8 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path,
         lines = wrap_title(clean_title)
 
         font_size = TITLE_FONT_SIZE
-        cap_height = int(font_size * 0.72)  # uppercase glyphs are ~72% of font size
-        line_gap = cap_height + 25          # cap height + 25px visual gap between lines
+        cap_height = int(font_size * 0.72)
+        line_gap = cap_height + 25
         total_h = cap_height + (len(lines) - 1) * line_gap
         first_y = cut_y - total_h // 2
 
@@ -315,13 +402,10 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path,
 
 def match_irl_clip(vr_name: str, irl_files: list[dict], player_key: str) -> dict | None:
     """Find the IRL clip that matches a VR clip by the 3-digit number in the filename."""
-    # Extract 3-digit number from VR clip name (e.g., 001 from "layup_001.mp4")
     match = re.search(r"(\d{3})", vr_name)
     if not match:
         return None
     vr_number = match.group(1)
-    
-    # Find IRL clip with the same 3-digit number
     for f in irl_files:
         if vr_number in f["name"]:
             return f
@@ -336,19 +420,16 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
 
         job_status[job_id].update({"status": "working", "message": "Connecting to Google Drive..."})
 
-        # List VR clips
         vr_folder_id = extract_folder_id(cat["vr_folder"])
         vr_files = list_drive_files(vr_folder_id, "video/")
         if not vr_files:
             raise ValueError("No VR clips found in the gameplay folder.")
 
-        # List IRL clips
         irl_folder_id = extract_folder_id(player["irl_folder"])
         irl_files = list_drive_files(irl_folder_id, "video/")
         if not irl_files:
             raise ValueError("No IRL clips found for this player.")
 
-        # Find matched pairs
         matched_pairs = []
         for vr in vr_files:
             irl = match_irl_clip(vr["name"], irl_files, player_key)
@@ -396,6 +477,119 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
             m = re.search(r"(\d{3})", vr["name"])
             clip_nums += f"{int(m.group(1)):02d}" if m else "00"
         out_name = f"{player_key}_{last_cat_word}_{clip_nums}.mp4"
+        title = cat["label"].upper() + " IN VR"
+        cut_y = 2160 if vr_on_top else 1680
+        add_audio(silent_video, audio_path, OUTPUT_DIR / out_name, title, cut_y)
+
+        job_status[job_id].update({"status": "done", "message": "Ready!", "file": out_name})
+
+    except Exception as e:
+        job_status[job_id].update({"status": "error", "message": str(e)})
+    finally:
+        for f in temp_files:
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def run_combo_pipeline(job_id: str, category_key: str, player_key: str, vr_on_top: bool):
+    temp_files = []
+    try:
+        cat = STACKED_CATEGORIES[category_key]
+        segments = cat["recipe"]["segments"]
+
+        job_status[job_id].update({"status": "working", "message": "Connecting to Google Drive..."})
+
+        all_clips_used = []
+        all_chosen_vr = []
+        segment_videos = []
+        segment_durations = []
+
+        for seg_idx, segment in enumerate(segments):
+            src_key = segment["source"].lower().replace(" ", "_")
+            count = segment["count"]
+            src_cat = STACKED_CATEGORIES[src_key]
+            player = src_cat["players"][player_key]
+
+            vr_folder_id = extract_folder_id(src_cat["vr_folder"])
+            vr_files = list_drive_files(vr_folder_id, "video/")
+            if not vr_files:
+                raise ValueError(f"No VR clips found in '{segment['source']}'.")
+
+            irl_folder_id = extract_folder_id(player["irl_folder"])
+            irl_files = list_drive_files(irl_folder_id, "video/")
+            if not irl_files:
+                raise ValueError(f"No IRL clips found for {player_key} in '{segment['source']}'.")
+
+            matched_pairs = []
+            for vr in vr_files:
+                irl = match_irl_clip(vr["name"], irl_files, player_key)
+                if irl:
+                    matched_pairs.append((vr, irl))
+
+            if len(matched_pairs) < count:
+                raise ValueError(
+                    f"Only {len(matched_pairs)} matched pairs in '{segment['source']}' — need {count}."
+                )
+
+            chosen_pairs = random.sample(matched_pairs, count)
+            all_clips_used += [f"{vr['name']} + {irl['name']}" for vr, irl in chosen_pairs]
+            all_chosen_vr += [vr for vr, _ in chosen_pairs]
+
+            stacked_clips = []
+            for i, (vr, irl) in enumerate(chosen_pairs):
+                job_status[job_id]["message"] = (
+                    f"Segment {seg_idx+1}/{len(segments)} ({segment['source']}): "
+                    f"downloading clip {i+1}/{count}..."
+                )
+                vr_raw  = TEMP_DIR / f"{job_id}_s{seg_idx}_{i}_vr.mp4"
+                irl_raw = TEMP_DIR / f"{job_id}_s{seg_idx}_{i}_irl.mp4"
+                stacked = TEMP_DIR / f"{job_id}_s{seg_idx}_{i}_stacked.mp4"
+                temp_files += [vr_raw, irl_raw, stacked]
+
+                download_drive_file(vr["id"], vr_raw)
+                download_drive_file(irl["id"], irl_raw)
+
+                job_status[job_id]["message"] = (
+                    f"Segment {seg_idx+1}/{len(segments)} ({segment['source']}): "
+                    f"processing clip {i+1}/{count}..."
+                )
+                stack_clips_from_raw(vr_raw, irl_raw, stacked, vr_on_top)
+                stacked_clips.append(stacked)
+
+            seg_vid = TEMP_DIR / f"{job_id}_seg{seg_idx}.mp4"
+            temp_files.append(seg_vid)
+            concat_clips(stacked_clips, seg_vid)
+            segment_durations.append(get_video_duration(seg_vid))
+            segment_videos.append(seg_vid)
+
+        job_status[job_id]["clips_used"] = all_clips_used
+        job_status[job_id]["message"] = "Stitching segments together..."
+        silent_video = TEMP_DIR / f"{job_id}_silent.mp4"
+        temp_files.append(silent_video)
+        concat_clips(segment_videos, silent_video)
+
+        job_status[job_id]["message"] = "Downloading music..."
+        music_paths = []
+        for m_idx, music_id in enumerate(cat["music_files"]):
+            mp = TEMP_DIR / f"{job_id}_music{m_idx}.mp3"
+            temp_files.append(mp)
+            download_drive_file(music_id, mp)
+            music_paths.append(mp)
+
+        job_status[job_id]["message"] = "Building crossfaded audio..."
+        audio_path = TEMP_DIR / f"{job_id}_audio.mp3"
+        temp_files.append(audio_path)
+        build_crossfaded_audio(music_paths, segment_durations, audio_path)
+
+        job_status[job_id]["message"] = "Adding music and title..."
+        clip_nums = ""
+        for vr in all_chosen_vr:
+            m = re.search(r"(\d{3})", vr["name"])
+            clip_nums += f"{int(m.group(1)):02d}" if m else "00"
+        recipe_name = cat["recipe"].get("name", "combo")
+        out_name = f"{player_key}_{recipe_name}_{clip_nums}.mp4"
         title = cat["label"].upper() + " IN VR"
         cut_y = 2160 if vr_on_top else 1680
         add_audio(silent_video, audio_path, OUTPUT_DIR / out_name, title, cut_y)
@@ -466,7 +660,11 @@ async def generate_stacked(request: Request, background_tasks: BackgroundTasks):
 
     job_id = str(uuid.uuid4())[:8]
     job_status[job_id] = {"status": "queued", "message": "Starting...", "file": None, "clips_used": []}
-    background_tasks.add_task(run_stacked_pipeline, job_id, category_key, player_key, vr_on_top)
+    cat = STACKED_CATEGORIES[category_key]
+    if cat.get("type") == "combo":
+        background_tasks.add_task(run_combo_pipeline, job_id, category_key, player_key, vr_on_top)
+    else:
+        background_tasks.add_task(run_stacked_pipeline, job_id, category_key, player_key, vr_on_top)
     return {"job_id": job_id}
 
 
