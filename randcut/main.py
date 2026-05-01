@@ -392,7 +392,7 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path,
                 f"y={y}"
             )
 
-        cmd += ["-vf", ",".join(dt_filters), "-c:v", "libx264", "-preset", "fast", "-crf", "22"]
+        cmd += ["-vf", ",".join(dt_filters), "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22", "-threads", "1"]
     else:
         cmd += ["-c:v", "copy"]
 
