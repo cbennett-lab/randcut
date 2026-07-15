@@ -412,7 +412,27 @@ def match_irl_clip(vr_name: str, irl_files: list[dict], player_key: str) -> dict
     return None
 
 
-def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_top: bool):
+def clip_number(name: str) -> int | None:
+    match = re.search(r"(\d{3})", name)
+    return int(match.group(1)) if match else None
+
+
+def pick_pairs(matched_pairs: list[tuple], count: int, seed_clip: int | None = None) -> list[tuple]:
+    """Choose `count` (vr, irl) pairs. If seed_clip is given, force the pair whose VR
+    clip number matches it to be first; the remaining pairs are still chosen randomly."""
+    if seed_clip is None:
+        return random.sample(matched_pairs, count)
+
+    first = next((pair for pair in matched_pairs if clip_number(pair[0]["name"]) == seed_clip), None)
+    if first is None:
+        raise ValueError(f"No clip found matching seed number {seed_clip}.")
+
+    remaining = [pair for pair in matched_pairs if pair is not first]
+    rest = random.sample(remaining, count - 1) if count > 1 else []
+    return [first] + rest
+
+
+def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_top: bool, seed_clip: int | None = None):
     temp_files = []
     try:
         cat = STACKED_CATEGORIES[category_key]
@@ -439,7 +459,7 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
         if len(matched_pairs) < NUM_PAIRS:
             raise ValueError(f"Only {len(matched_pairs)} matched pairs found — need at least {NUM_PAIRS}. Check filenames match.")
 
-        chosen_pairs = random.sample(matched_pairs, NUM_PAIRS)
+        chosen_pairs = pick_pairs(matched_pairs, NUM_PAIRS, seed_clip)
         pair_names = [f"{vr['name']} + {irl['name']}" for vr, irl in chosen_pairs]
         job_status[job_id]["clips_used"] = pair_names
         job_status[job_id]["message"] = f"Found {len(matched_pairs)} pairs. Downloading {NUM_PAIRS}..."
@@ -493,7 +513,7 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
                 pass
 
 
-def run_combo_pipeline(job_id: str, category_key: str, player_key: str, vr_on_top: bool):
+def run_combo_pipeline(job_id: str, category_key: str, player_key: str, vr_on_top: bool, seed_clip: int | None = None):
     temp_files = []
     try:
         cat = STACKED_CATEGORIES[category_key]
@@ -533,7 +553,7 @@ def run_combo_pipeline(job_id: str, category_key: str, player_key: str, vr_on_to
                     f"Only {len(matched_pairs)} matched pairs in '{segment['source']}' — need {count}."
                 )
 
-            chosen_pairs = random.sample(matched_pairs, count)
+            chosen_pairs = pick_pairs(matched_pairs, count, seed_clip if seg_idx == 0 else None)
             all_clips_used += [f"{vr['name']} + {irl['name']}" for vr, irl in chosen_pairs]
             all_chosen_vr += [vr for vr, _ in chosen_pairs]
 
@@ -652,19 +672,27 @@ async def generate_stacked(request: Request, background_tasks: BackgroundTasks):
     category_key = body.get("category")
     player_key   = body.get("player")
     vr_on_top    = body.get("vr_on_top", True)
+    seed_raw     = body.get("seed")
 
     if category_key not in STACKED_CATEGORIES:
         return JSONResponse(status_code=400, content={"error": f"Unknown category: {category_key}"})
     if player_key not in STACKED_CATEGORIES[category_key]["players"]:
         return JSONResponse(status_code=400, content={"error": f"Unknown player: {player_key}"})
 
+    seed_clip = None
+    if seed_raw not in (None, ""):
+        try:
+            seed_clip = int(seed_raw)
+        except (TypeError, ValueError):
+            return JSONResponse(status_code=400, content={"error": f"Invalid seed value: {seed_raw}"})
+
     job_id = str(uuid.uuid4())[:8]
     job_status[job_id] = {"status": "queued", "message": "Starting...", "file": None, "clips_used": []}
     cat = STACKED_CATEGORIES[category_key]
     if cat.get("type") == "combo":
-        background_tasks.add_task(run_combo_pipeline, job_id, category_key, player_key, vr_on_top)
+        background_tasks.add_task(run_combo_pipeline, job_id, category_key, player_key, vr_on_top, seed_clip)
     else:
-        background_tasks.add_task(run_stacked_pipeline, job_id, category_key, player_key, vr_on_top)
+        background_tasks.add_task(run_stacked_pipeline, job_id, category_key, player_key, vr_on_top, seed_clip)
     return {"job_id": job_id}
 
 

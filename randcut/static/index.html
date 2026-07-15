@@ -191,6 +191,33 @@
   }
   .layout-btn.selected .layout-lbl { color: #fff; }
 
+  /* SEED */
+  .seed-box {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .seed-random {
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--dark);
+    cursor: pointer; user-select: none;
+  }
+  .seed-random input { width: 16px; height: 16px; accent-color: var(--dark); cursor: pointer; }
+  .seed-input {
+    flex: 1; max-width: 140px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; font-family: 'Barlow Condensed', sans-serif;
+    font-size: 14px; color: var(--dark);
+  }
+  .seed-input:disabled { opacity: 0.5; cursor: not-allowed; }
+  .seed-hint {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 10px; letter-spacing: 1px; color: var(--muted);
+    margin-top: 6px;
+  }
+
   /* GENERATE */
   .no-sel {
     font-family: 'Barlow Condensed', sans-serif;
@@ -360,8 +387,19 @@
     <div class="step-label">Step 2 — Choose your player</div>
     <div class="players" id="players"></div>
 
-    <!-- STEP 3: Layout -->
-    <div class="step-label">Step 3 — Choose layout</div>
+    <!-- STEP 3: Seed -->
+    <div class="step-label">Step 3 — Set a seed</div>
+    <div class="seed-box">
+      <label class="seed-random">
+        <input type="checkbox" id="seedRandomCheck" checked onchange="toggleSeedRandom()">
+        Random
+      </label>
+      <input type="number" id="seedInput" class="seed-input" placeholder="Clip #" min="1" disabled oninput="onSeedValueInput()">
+    </div>
+    <div class="seed-hint">Uncheck Random and enter a clip number to force it as the first clip — the rest are still chosen randomly.</div>
+
+    <!-- STEP 4: Layout -->
+    <div class="step-label">Step 4 — Choose layout</div>
     <div class="layout-toggle">
       <div class="layout-btn selected" id="layoutTop" onclick="setLayout(true)">
         <div class="layout-preview">
@@ -425,6 +463,8 @@
   let selectedCategory = null;
   let selectedPlayer = null;
   let vrOnTop = true;
+  let seedRandom = true;
+  let seedValue = null;
   let generateCount = 0;
   let pollInterval = null;
 
@@ -500,6 +540,21 @@
     document.getElementById('layoutBottom').classList.toggle('selected', !vrTop);
   }
 
+  function toggleSeedRandom() {
+    seedRandom = document.getElementById('seedRandomCheck').checked;
+    const input = document.getElementById('seedInput');
+    input.disabled = seedRandom;
+    if (seedRandom) {
+      input.value = '';
+      seedValue = null;
+    }
+  }
+
+  function onSeedValueInput() {
+    const raw = document.getElementById('seedInput').value;
+    seedValue = raw === '' ? null : parseInt(raw, 10);
+  }
+
   async function generate() {
     if (!selectedCategory || !selectedPlayer) {
       document.getElementById('noSel').classList.add('visible');
@@ -528,7 +583,7 @@
       const res = await fetch('/generate-stacked', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: selectedCategory, player: selectedPlayer, vr_on_top: vrOnTop })
+        body: JSON.stringify({ category: selectedCategory, player: selectedPlayer, vr_on_top: vrOnTop, seed: seedRandom ? null : seedValue })
       });
       const { job_id } = await res.json();
 
