@@ -1,7 +1,8 @@
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.background import BackgroundTask
 import subprocess
 import uuid
 import os
@@ -9,6 +10,9 @@ import random
 import re
 import requests
 import threading
+import queue
+import time
+import zipfile
 from pathlib import Path
 
 app = FastAPI()
@@ -39,6 +43,56 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 
 job_status = {}
+
+# ─────────────────────────────────────────────
+# RENDER QUEUE
+# Jobs run one at a time on a single worker thread — Railway's memory ceiling
+# can't handle two ffmpeg passes at once.
+MAX_BATCH = 20
+
+WORK_QUEUE: "queue.Queue[str]" = queue.Queue()
+JOB_ORDER: list[str] = []          # submission order, drives the UI list
+QUEUE_LOCK = threading.RLock()
+CANCELLED: set[str] = set()        # job_ids the user asked to stop
+CURRENT = {"job_id": None, "proc": None}   # job + ffmpeg process running right now
+
+
+class JobCancelled(Exception):
+    """Raised inside a pipeline when the user cancels the job mid-render."""
+
+
+def check_cancel():
+    job_id = CURRENT["job_id"]
+    if job_id is not None and job_id in CANCELLED:
+        raise JobCancelled()
+
+
+def run_ffmpeg(cmd: list[str]):
+    """Run an ffmpeg/ffprobe command so it can be killed by a cancel request."""
+    check_cancel()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    with QUEUE_LOCK:
+        CURRENT["proc"] = proc
+    try:
+        out, err = proc.communicate()
+    finally:
+        with QUEUE_LOCK:
+            CURRENT["proc"] = None
+    if proc.returncode != 0:
+        check_cancel()  # a non-zero exit because we killed it is a cancel, not a failure
+        raise subprocess.CalledProcessError(proc.returncode, cmd, out, err)
+    return out
+
+
+def kill_current_proc():
+    with QUEUE_LOCK:
+        proc = CURRENT["proc"]
+    if proc and proc.poll() is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+# ─────────────────────────────────────────────
 
 
 def extract_folder_id(link: str) -> str:
@@ -79,6 +133,7 @@ def download_drive_file(file_id: str, dest: Path):
         response = session.get(url, params={"confirm": token}, stream=True, timeout=180)
     with open(dest, "wb") as f:
         for chunk in response.iter_content(chunk_size=1024 * 1024):
+            check_cancel()
             if chunk:
                 f.write(chunk)
 
@@ -238,8 +293,7 @@ def get_video_duration(file_path: Path) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1:nokey=1",
         str(file_path)
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    return float(result.stdout.strip())
+    return float(run_ffmpeg(cmd).decode().strip())
 
 
 def stack_clips_from_raw(vr_raw_path: Path, irl_raw_path: Path, output_path: Path, vr_on_top: bool = True):
@@ -273,7 +327,7 @@ def stack_clips_from_raw(vr_raw_path: Path, irl_raw_path: Path, output_path: Pat
         "-movflags", "+faststart",
         str(output_path)
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    run_ffmpeg(cmd)
 
 
 def concat_clips(clip_paths: list[Path], output_path: Path):
@@ -289,7 +343,7 @@ def concat_clips(clip_paths: list[Path], output_path: Path):
         "-movflags", "+faststart",
         str(output_path)
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    run_ffmpeg(cmd)
     list_file.unlink(missing_ok=True)
 
 
@@ -297,7 +351,7 @@ def build_crossfaded_audio(music_paths: list[Path], segment_durations: list[floa
     """Crossfade multiple music tracks so each transition aligns with the segment boundary."""
     if len(music_paths) == 1:
         cmd = ["ffmpeg", "-y", "-i", str(music_paths[0]), "-c:a", "copy", str(output_path)]
-        subprocess.run(cmd, check=True, capture_output=True)
+        run_ffmpeg(cmd)
         return
 
     cf = CROSSFADE_SEC
@@ -326,7 +380,7 @@ def build_crossfaded_audio(music_paths: list[Path], segment_durations: list[floa
         "-c:a", "libmp3lame", "-b:a", "192k",
         str(output_path)
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    run_ffmpeg(cmd)
 
 
 TITLE_FONT_SIZE = 140
@@ -397,7 +451,7 @@ def add_audio(video_path: Path, audio_path: Path, output_path: Path,
         cmd += ["-c:v", "copy"]
 
     cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(output_path)]
-    subprocess.run(cmd, check=True, capture_output=True)
+    run_ffmpeg(cmd)
 
 
 def match_irl_clip(vr_name: str, irl_files: list[dict], player_key: str) -> dict | None:
@@ -496,16 +550,27 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
         for vr, _ in chosen_pairs:
             m = re.search(r"(\d{3})", vr["name"])
             clip_nums += f"{int(m.group(1)):02d}" if m else "00"
-        out_name = f"{player_key}_{last_cat_word}_{clip_nums}.mp4"
+        pretty_name = f"{player_key}_{last_cat_word}_{clip_nums}.mp4"
+        out_name = f"{job_id}_{pretty_name}"  # job_id keeps queued renders from colliding on disk
         title = cat["label"].upper() + " IN VR"
         cut_y = 2160 if vr_on_top else 1680
-        add_audio(silent_video, audio_path, OUTPUT_DIR / out_name, title, cut_y)
+        # Render to temp first so a cancelled job never leaves a half-written file in outputs/
+        final_tmp = TEMP_DIR / out_name
+        temp_files.append(final_tmp)
+        add_audio(silent_video, audio_path, final_tmp, title, cut_y)
+        os.replace(final_tmp, OUTPUT_DIR / out_name)
 
-        job_status[job_id].update({"status": "done", "message": "Ready!", "file": out_name})
+        job_status[job_id].update({
+            "status": "done", "message": "Ready!",
+            "file": out_name, "download_name": pretty_name,
+        })
 
+    except JobCancelled:
+        job_status[job_id].update({"status": "cancelled", "message": "Stopped."})
     except Exception as e:
         job_status[job_id].update({"status": "error", "message": str(e)})
     finally:
+        job_status[job_id]["finished_at"] = time.time()
         for f in temp_files:
             try:
                 f.unlink(missing_ok=True)
@@ -609,16 +674,27 @@ def run_combo_pipeline(job_id: str, category_key: str, player_key: str, vr_on_to
             m = re.search(r"(\d{3})", vr["name"])
             clip_nums += f"{int(m.group(1)):02d}" if m else "00"
         recipe_name = cat["recipe"].get("name", "combo")
-        out_name = f"{player_key}_{recipe_name}_{clip_nums}.mp4"
+        pretty_name = f"{player_key}_{recipe_name}_{clip_nums}.mp4"
+        out_name = f"{job_id}_{pretty_name}"  # job_id keeps queued renders from colliding on disk
         title = cat["label"].upper() + " IN VR"
         cut_y = 2160 if vr_on_top else 1680
-        add_audio(silent_video, audio_path, OUTPUT_DIR / out_name, title, cut_y)
+        # Render to temp first so a cancelled job never leaves a half-written file in outputs/
+        final_tmp = TEMP_DIR / out_name
+        temp_files.append(final_tmp)
+        add_audio(silent_video, audio_path, final_tmp, title, cut_y)
+        os.replace(final_tmp, OUTPUT_DIR / out_name)
 
-        job_status[job_id].update({"status": "done", "message": "Ready!", "file": out_name})
+        job_status[job_id].update({
+            "status": "done", "message": "Ready!",
+            "file": out_name, "download_name": pretty_name,
+        })
 
+    except JobCancelled:
+        job_status[job_id].update({"status": "cancelled", "message": "Stopped."})
     except Exception as e:
         job_status[job_id].update({"status": "error", "message": str(e)})
     finally:
+        job_status[job_id]["finished_at"] = time.time()
         for f in temp_files:
             try:
                 f.unlink(missing_ok=True)
@@ -626,9 +702,88 @@ def run_combo_pipeline(job_id: str, category_key: str, player_key: str, vr_on_to
                 pass
 
 
+def render_worker():
+    """Single worker thread — pulls job ids off the queue and renders them one at a time."""
+    while True:
+        job_id = WORK_QUEUE.get()
+        try:
+            job = job_status.get(job_id)
+            if job is None:
+                continue
+
+            with QUEUE_LOCK:
+                if job_id in CANCELLED:
+                    job.update({"status": "cancelled", "message": "Stopped before it started.",
+                                "finished_at": time.time()})
+                    continue
+                CURRENT["job_id"] = job_id
+                CURRENT["proc"] = None
+
+            job["started_at"] = time.time()
+            try:
+                cat = STACKED_CATEGORIES.get(job["category"], {})
+                pipeline = run_combo_pipeline if cat.get("type") == "combo" else run_stacked_pipeline
+                pipeline(job_id, job["category"], job["player"], job["vr_on_top"], job["seed"])
+            except Exception as e:  # pipelines handle their own errors; this is a backstop
+                job.update({"status": "error", "message": str(e), "finished_at": time.time()})
+            finally:
+                with QUEUE_LOCK:
+                    CURRENT["job_id"] = None
+                    CURRENT["proc"] = None
+        finally:
+            WORK_QUEUE.task_done()
+
+
+def enqueue_job(category_key: str, player_key: str, vr_on_top: bool, seed_clip: int | None) -> str:
+    cat = STACKED_CATEGORIES[category_key]
+    job_id = str(uuid.uuid4())[:8]
+    with QUEUE_LOCK:
+        job_status[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Waiting in queue...",
+            "file": None,
+            "download_name": None,
+            "clips_used": [],
+            "category": category_key,
+            "category_label": cat["label"],
+            "player": player_key,
+            "player_label": cat["players"][player_key]["display"],
+            "vr_on_top": vr_on_top,
+            "seed": seed_clip,
+            "created_at": time.time(),
+        }
+        JOB_ORDER.append(job_id)
+    WORK_QUEUE.put(job_id)
+    return job_id
+
+
+def queue_snapshot() -> dict:
+    with QUEUE_LOCK:
+        jobs = [job_status[j] for j in JOB_ORDER if j in job_status]
+        running = CURRENT["job_id"]
+    pending = sum(1 for j in jobs if j["status"] == "queued")
+    return {
+        "jobs": jobs,
+        "running": running,
+        "pending": pending,
+        "done": sum(1 for j in jobs if j["status"] == "done"),
+        "active": running is not None or pending > 0,
+    }
+
+
+def delete_output(job: dict):
+    if job.get("file"):
+        try:
+            (OUTPUT_DIR / job["file"]).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 @app.on_event("startup")
 async def startup_event():
-    """Populate categories from Drive on app startup."""
+    """Populate categories from Drive and start the render worker."""
+    threading.Thread(target=render_worker, daemon=True).start()
     try:
         populate_stacked_categories()
         threading.Thread(target=prefetch_player_images, daemon=True).start()
@@ -667,12 +822,14 @@ async def get_player_image(player_key: str):
 
 
 @app.post("/generate-stacked")
-async def generate_stacked(request: Request, background_tasks: BackgroundTasks):
+async def generate_stacked(request: Request):
+    """Add one or more render requests to the queue."""
     body = await request.json()
     category_key = body.get("category")
     player_key   = body.get("player")
     vr_on_top    = body.get("vr_on_top", True)
     seed_raw     = body.get("seed")
+    count_raw    = body.get("count", 1)
 
     if category_key not in STACKED_CATEGORIES:
         return JSONResponse(status_code=400, content={"error": f"Unknown category: {category_key}"})
@@ -686,14 +843,92 @@ async def generate_stacked(request: Request, background_tasks: BackgroundTasks):
         except (TypeError, ValueError):
             return JSONResponse(status_code=400, content={"error": f"Invalid seed value: {seed_raw}"})
 
-    job_id = str(uuid.uuid4())[:8]
-    job_status[job_id] = {"status": "queued", "message": "Starting...", "file": None, "clips_used": []}
-    cat = STACKED_CATEGORIES[category_key]
-    if cat.get("type") == "combo":
-        background_tasks.add_task(run_combo_pipeline, job_id, category_key, player_key, vr_on_top, seed_clip)
-    else:
-        background_tasks.add_task(run_stacked_pipeline, job_id, category_key, player_key, vr_on_top, seed_clip)
-    return {"job_id": job_id}
+    try:
+        count = int(count_raw)
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"error": f"Invalid count: {count_raw}"})
+    if count < 1 or count > MAX_BATCH:
+        return JSONResponse(status_code=400, content={"error": f"Count must be between 1 and {MAX_BATCH}."})
+
+    job_ids = [enqueue_job(category_key, player_key, vr_on_top, seed_clip) for _ in range(count)]
+    return {"job_ids": job_ids, "job_id": job_ids[0], "queue": queue_snapshot()}
+
+
+@app.get("/queue")
+async def get_queue():
+    return queue_snapshot()
+
+
+@app.post("/queue/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    """Stop a single job — kills its ffmpeg pass if it's the one rendering."""
+    job = job_status.get(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    with QUEUE_LOCK:
+        if job["status"] in ("done", "error", "cancelled"):
+            return queue_snapshot()
+        CANCELLED.add(job_id)
+        job["message"] = "Stopping..."
+        is_running = CURRENT["job_id"] == job_id
+        if not is_running:
+            job.update({"status": "cancelled", "message": "Stopped before it started.",
+                        "finished_at": time.time()})
+    if is_running:
+        kill_current_proc()
+    return queue_snapshot()
+
+
+@app.post("/queue/stop")
+async def stop_queue():
+    """Stop the render in progress and drop everything still waiting."""
+    with QUEUE_LOCK:
+        running = CURRENT["job_id"]
+        for job_id in JOB_ORDER:
+            job = job_status.get(job_id)
+            if not job or job["status"] in ("done", "error", "cancelled"):
+                continue
+            CANCELLED.add(job_id)
+            if job_id == running:
+                job["message"] = "Stopping..."
+            else:
+                job.update({"status": "cancelled", "message": "Stopped before it started.",
+                            "finished_at": time.time()})
+    if running:
+        kill_current_proc()
+    return queue_snapshot()
+
+
+@app.post("/queue/{job_id}/remove")
+async def remove_job(job_id: str):
+    """Drop a finished job from the list and delete its file."""
+    with QUEUE_LOCK:
+        job = job_status.get(job_id)
+        if not job:
+            return JSONResponse(status_code=404, content={"error": "Job not found"})
+        if job["status"] not in ("done", "error", "cancelled"):
+            return JSONResponse(status_code=400, content={"error": "Stop the job before removing it."})
+        delete_output(job)
+        job_status.pop(job_id, None)
+        CANCELLED.discard(job_id)
+        if job_id in JOB_ORDER:
+            JOB_ORDER.remove(job_id)
+    return queue_snapshot()
+
+
+@app.post("/queue/clear")
+async def clear_queue():
+    """Clear every finished/stopped entry and its file. Anything still rendering stays."""
+    with QUEUE_LOCK:
+        for job_id in list(JOB_ORDER):
+            job = job_status.get(job_id)
+            if not job or job["status"] not in ("done", "error", "cancelled"):
+                continue
+            delete_output(job)
+            job_status.pop(job_id, None)
+            CANCELLED.discard(job_id)
+            JOB_ORDER.remove(job_id)
+    return queue_snapshot()
 
 
 @app.get("/status/{job_id}")
@@ -703,10 +938,42 @@ async def get_status(job_id: str):
 
 @app.get("/download/{filename}")
 async def download(filename: str):
-    path = OUTPUT_DIR / filename
-    if not path.exists():
+    path = (OUTPUT_DIR / filename).resolve()
+    if OUTPUT_DIR.resolve() not in path.parents or not path.exists():
         return JSONResponse(status_code=404, content={"error": "File not found"})
-    return FileResponse(path, media_type="video/mp4", filename=filename)
+    job = next((j for j in job_status.values() if j.get("file") == filename), None)
+    nice_name = (job or {}).get("download_name") or filename
+    return FileResponse(path, media_type="video/mp4", filename=nice_name)
+
+
+@app.get("/download-all")
+async def download_all():
+    """Zip every finished render in the queue into one download."""
+    with QUEUE_LOCK:
+        finished = [job_status[j] for j in JOB_ORDER
+                    if job_status.get(j, {}).get("status") == "done" and job_status[j].get("file")]
+    ready = [j for j in finished if (OUTPUT_DIR / j["file"]).exists()]
+    if not ready:
+        return JSONResponse(status_code=404, content={"error": "No finished renders to download yet."})
+
+    zip_path = TEMP_DIR / f"wow_moments_{int(time.time())}.zip"
+    used_names: set[str] = set()
+    # ZIP_STORED: mp4s don't compress, and Railway's memory budget is tight
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED, allowZip64=True) as zf:
+        for i, job in enumerate(ready, start=1):
+            name = job.get("download_name") or job["file"]
+            if name in used_names:
+                stem, ext = os.path.splitext(name)
+                name = f"{stem}_{i}{ext}"
+            used_names.add(name)
+            zf.write(OUTPUT_DIR / job["file"], arcname=name)
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=zip_path.name,
+        background=BackgroundTask(lambda: zip_path.unlink(missing_ok=True)),
+    )
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

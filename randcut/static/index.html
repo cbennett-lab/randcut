@@ -302,6 +302,109 @@
   .dl-btn:hover { background: #236040; }
   .dl-btn.visible { display: block; }
 
+  /* QUANTITY */
+  .qty-box {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+  }
+  .qty-stepper {
+    display: flex; align-items: center;
+    border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  }
+  .qty-btn {
+    width: 34px; height: 34px; background: var(--bg); border: none; cursor: pointer;
+    font-family: 'Barlow Condensed', sans-serif; font-size: 20px; color: var(--dark);
+    line-height: 1; transition: background 0.15s;
+  }
+  .qty-btn:hover { background: var(--border); }
+  .qty-val {
+    width: 50px; text-align: center;
+    font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px;
+  }
+  .qty-presets { display: flex; gap: 6px; }
+  .qty-preset {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 100px;
+    padding: 6px 13px; cursor: pointer; color: var(--muted);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 700; letter-spacing: 1px;
+    transition: all 0.15s;
+  }
+  .qty-preset:hover { border-color: var(--dark); color: var(--dark); }
+
+  /* QUEUE */
+  .queue-panel { margin-top: 28px; display: none; }
+  .queue-panel.visible { display: block; }
+  .queue-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+  }
+  .queue-title { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 2px; color: var(--dark); }
+  .queue-count {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted);
+  }
+  .queue-track { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 12px; }
+  .queue-bar { height: 100%; width: 0%; background: var(--green); border-radius: 2px; transition: width 0.35s ease; }
+
+  .queue-list { display: flex; flex-direction: column; gap: 8px; max-height: 440px; overflow-y: auto; padding-right: 4px; }
+  .q-item {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start;
+    transition: border-color 0.2s, opacity 0.2s;
+  }
+  .q-item.working { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .q-item.done { border-color: rgba(42,122,74,0.55); }
+  .q-item.error { border-color: #cc3333; }
+  .q-item.cancelled { opacity: 0.55; }
+  .q-num {
+    font-family: 'Bebas Neue', sans-serif; font-size: 17px;
+    color: var(--muted); min-width: 24px; padding-top: 1px;
+  }
+  .q-body { flex: 1; min-width: 0; }
+  .q-name {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 15px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--dark);
+  }
+  .q-meta {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); margin-top: 2px;
+  }
+  .q-status { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+  .q-msg { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; letter-spacing: 0.5px; color: var(--muted); }
+  .q-clips { margin-top: 6px; }
+  .q-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .q-dl {
+    background: var(--green); color: #fff; text-decoration: none;
+    padding: 8px 14px; border-radius: 6px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    transition: background 0.15s;
+  }
+  .q-dl:hover { background: #236040; }
+  .q-x {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
+    font-size: 14px; line-height: 1; transition: all 0.15s;
+  }
+  .q-x:hover { border-color: #cc3333; color: #cc3333; }
+  .dot.cancelled { background: var(--muted); }
+  .dot.queued { background: var(--border); }
+
+  .queue-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .qa-btn {
+    flex: 1; min-width: 150px; padding: 15px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card); color: var(--dark);
+    font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 3px;
+    transition: all 0.15s;
+  }
+  .qa-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.12); }
+  .qa-btn.primary { background: var(--green); border-color: var(--green); color: #fff; }
+  .qa-btn.danger { background: #cc3333; border-color: #cc3333; color: #fff; }
+  .qa-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
   /* SOCIAL */
   .social-section { background: var(--dark); padding: 80px 40px; text-align: center; }
   .social-eyebrow {
@@ -417,24 +520,50 @@
       </div>
     </div>
 
+    <!-- STEP 5: How many -->
+    <div class="step-label">Step 5 — How many?</div>
+    <div class="qty-box">
+      <div class="qty-stepper">
+        <button class="qty-btn" onclick="setQty(qty - 1)">−</button>
+        <div class="qty-val" id="qtyVal">1</div>
+        <button class="qty-btn" onclick="setQty(qty + 1)">+</button>
+      </div>
+      <div class="qty-presets">
+        <button class="qty-preset" onclick="setQty(3)">3</button>
+        <button class="qty-preset" onclick="setQty(5)">5</button>
+        <button class="qty-preset" onclick="setQty(7)">7</button>
+        <button class="qty-preset" onclick="setQty(10)">10</button>
+      </div>
+    </div>
+    <div class="seed-hint">Renders run one at a time. Add more with different settings any time — they stack up in the queue below.</div>
+
     <div class="no-sel" id="noSel">Please select a moment and a player first</div>
 
-    <button class="generate-btn" id="generateBtn" onclick="generate()">
-      ⚡ GENERATE MY HIGHLIGHT
+    <button class="generate-btn" id="generateBtn" onclick="addToQueue()">
+      ⚡ ADD TO QUEUE
     </button>
 
     <div class="status-panel" id="statusPanel">
       <div class="status-row">
-        <div class="dot" id="dot"></div>
-        <div class="status-msg" id="statusMsg">Starting...</div>
-      </div>
-      <div class="clips-section" id="clipsSection">
-        <div class="clips-lbl">Pairs selected</div>
-        <div id="clipTags"></div>
+        <div class="dot error"></div>
+        <div class="status-msg" id="statusMsg"></div>
       </div>
     </div>
 
-    <a class="dl-btn" id="dlBtn" href="#" download>↓ Download Your Highlight</a>
+    <!-- RENDER QUEUE -->
+    <div class="queue-panel" id="queuePanel">
+      <div class="queue-head">
+        <div class="queue-title">RENDER QUEUE</div>
+        <div class="queue-count" id="queueCount"></div>
+      </div>
+      <div class="queue-track"><div class="queue-bar" id="queueBar"></div></div>
+      <div class="queue-list" id="queueList"></div>
+      <div class="queue-actions">
+        <button class="qa-btn primary" id="dlAllBtn" onclick="downloadAll()">↓ DOWNLOAD ALL</button>
+        <button class="qa-btn danger" id="stopBtn" onclick="stopAll()">■ STOP RENDER</button>
+        <button class="qa-btn" id="clearBtn" onclick="clearFinished()">CLEAR FINISHED</button>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -465,8 +594,9 @@
   let vrOnTop = true;
   let seedRandom = true;
   let seedValue = null;
-  let generateCount = 0;
+  let qty = 1;
   let pollInterval = null;
+  const MAX_BATCH = 20;
 
   const icons = { layups: '🏀', touchdowns: '🏈', blocks: '🛡️' };
 
@@ -555,69 +685,159 @@
     seedValue = raw === '' ? null : parseInt(raw, 10);
   }
 
-  async function generate() {
+  function setQty(n) {
+    qty = Math.max(1, Math.min(MAX_BATCH, n));
+    document.getElementById('qtyVal').textContent = qty;
+    document.getElementById('generateBtn').textContent =
+      qty === 1 ? '⚡ ADD TO QUEUE' : '⚡ ADD ' + qty + ' TO QUEUE';
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function showError(text) {
+    const panel = document.getElementById('statusPanel');
+    document.getElementById('statusMsg').textContent = text;
+    panel.classList.add('visible');
+  }
+
+  async function addToQueue() {
     if (!selectedCategory || !selectedPlayer) {
       document.getElementById('noSel').classList.add('visible');
       return;
     }
+    document.getElementById('statusPanel').classList.remove('visible');
 
     const btn = document.getElementById('generateBtn');
-    const panel = document.getElementById('statusPanel');
-    const dot = document.getElementById('dot');
-    const msg = document.getElementById('statusMsg');
-    const dlBtn = document.getElementById('dlBtn');
-    const clipsSection = document.getElementById('clipsSection');
-    const clipTags = document.getElementById('clipTags');
-
     btn.disabled = true;
-    dlBtn.classList.remove('visible');
-    clipsSection.classList.remove('visible');
-    clipTags.innerHTML = '';
-    panel.classList.add('visible');
-    dot.className = 'dot working';
-    msg.textContent = 'Connecting to Google Drive...';
-
-    if (pollInterval) clearInterval(pollInterval);
-
     try {
       const res = await fetch('/generate-stacked', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: selectedCategory, player: selectedPlayer, vr_on_top: vrOnTop, seed: seedRandom ? null : seedValue })
+        body: JSON.stringify({
+          category: selectedCategory,
+          player: selectedPlayer,
+          vr_on_top: vrOnTop,
+          seed: seedRandom ? null : seedValue,
+          count: qty
+        })
       });
-      const { job_id } = await res.json();
-
-      pollInterval = setInterval(async () => {
-        const s = await fetch('/status/' + job_id).then(r => r.json());
-        msg.textContent = s.message || '...';
-
-        if (s.clips_used && s.clips_used.length) {
-          clipsSection.classList.add('visible');
-          clipTags.innerHTML = s.clips_used.map(n => '<span class="clip-tag">' + n + '</span>').join('');
-        }
-
-        if (s.status === 'done') {
-          clearInterval(pollInterval);
-          dot.className = 'dot done';
-          btn.disabled = false;
-          generateCount++;
-          dlBtn.href = '/download/' + s.file;
-          dlBtn.setAttribute('download', 'gymclass_highlight_' + generateCount + '.mp4');
-          dlBtn.classList.add('visible');
-        } else if (s.status === 'error') {
-          clearInterval(pollInterval);
-          dot.className = 'dot error';
-          btn.disabled = false;
-        }
-      }, 1500);
-    } catch(e) {
-      msg.textContent = 'Error: ' + e.message;
-      dot.className = 'dot error';
+      const data = await res.json();
+      if (data.error) { showError(data.error); return; }
+      renderQueue(data.queue);
+      startPolling();
+    } catch (e) {
+      showError('Error: ' + e.message);
+    } finally {
       btn.disabled = false;
     }
   }
 
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(pollQueue, 1500);
+  }
+
+  async function pollQueue() {
+    try {
+      const state = await fetch('/queue').then(r => r.json());
+      renderQueue(state);
+      if (state.active) {
+        startPolling();          // picks the queue back up after a page refresh
+      } else if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    } catch (e) { /* keep polling through a blip */ }
+  }
+
+  function renderQueue(state) {
+    const panel = document.getElementById('queuePanel');
+    const list = document.getElementById('queueList');
+    const jobs = state.jobs || [];
+
+    if (!jobs.length) {
+      panel.classList.remove('visible');
+      list.innerHTML = '';
+      return;
+    }
+    panel.classList.add('visible');
+
+    const done = jobs.filter(j => j.status === 'done').length;
+    const live = jobs.filter(j => j.status !== 'cancelled').length;
+    const failed = jobs.filter(j => j.status === 'error').length;
+
+    let count = done + ' of ' + live + ' ready';
+    if (state.pending) count += ' · ' + state.pending + ' waiting';
+    if (failed) count += ' · ' + failed + ' failed';
+    document.getElementById('queueCount').textContent = count;
+    document.getElementById('queueBar').style.width = (live ? (done / live) * 100 : 0) + '%';
+
+    list.innerHTML = jobs.map((j, i) => {
+      const layout = j.vr_on_top ? 'Gameplay top' : 'Gameplay bottom';
+      const seed = j.seed == null ? 'Random' : 'Seed ' + j.seed;
+      const clips = (j.clips_used && j.clips_used.length)
+        ? '<div class="q-clips">' + j.clips_used.map(n => '<span class="clip-tag">' + esc(n) + '</span>').join('') + '</div>'
+        : '';
+      const dl = j.status === 'done'
+        ? '<a class="q-dl" href="/download/' + encodeURIComponent(j.file) + '" download>↓ MP4</a>'
+        : '';
+      const finished = ['done', 'error', 'cancelled'].includes(j.status);
+      const x = '<button class="q-x" title="' + (finished ? 'Remove' : 'Stop this render') + '" onclick="' +
+        (finished ? 'removeJob' : 'cancelJob') + "('" + j.job_id + "')" + '">✕</button>';
+
+      return '<div class="q-item ' + j.status + '">' +
+        '<div class="q-num">' + (i + 1) + '</div>' +
+        '<div class="q-body">' +
+          '<div class="q-name">' + esc(j.category_label) + ' · ' + esc(j.player_label) + '</div>' +
+          '<div class="q-meta">' + layout + ' · ' + seed + '</div>' +
+          '<div class="q-status"><div class="dot ' + j.status + '"></div>' +
+            '<div class="q-msg">' + esc(j.message || '') + '</div></div>' +
+          clips +
+        '</div>' +
+        '<div class="q-actions">' + dl + x + '</div>' +
+      '</div>';
+    }).join('');
+
+    document.getElementById('dlAllBtn').disabled = done === 0;
+    document.getElementById('dlAllBtn').textContent = done > 1
+      ? '↓ DOWNLOAD ALL (' + done + ')' : '↓ DOWNLOAD ALL';
+    document.getElementById('stopBtn').disabled = !state.active;
+    document.getElementById('clearBtn').disabled = jobs.every(j => !['done', 'error', 'cancelled'].includes(j.status));
+  }
+
+  async function postQueue(url) {
+    try {
+      const state = await fetch(url, { method: 'POST' }).then(r => r.json());
+      if (state.error) { showError(state.error); return; }
+      renderQueue(state);
+      if (state.active) startPolling();
+    } catch (e) {
+      showError('Error: ' + e.message);
+    }
+  }
+
+  const cancelJob = id => postQueue('/queue/' + id + '/cancel');
+  const removeJob = id => postQueue('/queue/' + id + '/remove');
+
+  function stopAll() {
+    if (!confirm('Stop the current render and drop everything still waiting?')) return;
+    postQueue('/queue/stop');
+  }
+
+  function clearFinished() {
+    if (!confirm('Clear finished renders from the list? Their files are deleted from the server.')) return;
+    postQueue('/queue/clear');
+  }
+
+  function downloadAll() {
+    window.location = '/download-all';
+  }
+
   loadCategories();
+  pollQueue();
 </script>
 </body>
 </html>

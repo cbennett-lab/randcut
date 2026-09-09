@@ -65,10 +65,13 @@ open http://localhost:8000
 ## How to Use
 
 1. Open your deployed URL
-2. Hit **GENERATE**
-3. Watch the status update in real time (shows which clips were randomly picked)
-4. Hit **↓ DOWNLOAD VIDEO** when it's done
-5. Hit **GENERATE** again for a different random combo
+2. Pick a moment, a player, a seed, and a layout
+3. Set **how many** you want (stepper or the 3/5/7/10 presets) and hit **ADD TO QUEUE**
+4. Renders run one at a time. Change the settings and add more any time — they stack up in the same queue
+5. Grab each video with **↓ MP4** as it finishes, or **↓ DOWNLOAD ALL** for a zip of the whole group
+6. **■ STOP RENDER** kills the render in progress and drops everything still waiting; **CLEAR FINISHED** empties the list and deletes those files from the server
+
+The queue lives on the server, so a page refresh picks it back up where it left off.
 
 ---
 
