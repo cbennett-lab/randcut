@@ -15,6 +15,14 @@ import time
 import zipfile
 from pathlib import Path
 
+# Local dev reads keys from randcut/.env. On Railway the variables are already
+# in the environment and win — load_dotenv never overwrites what's set.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # not installed in prod images built before dotenv was added
+
 app = FastAPI()
 
 app.add_middleware(
@@ -772,6 +780,23 @@ def queue_snapshot() -> dict:
     }
 
 
+def zip_influencer_name(jobs: list[dict]) -> str:
+    """Influencer half of the download-all filename.
+
+    One influencer in the batch gives their name; a mixed batch joins them,
+    falling back to 'mixed' once that would run long.
+    """
+    names: list[str] = []
+    for job in jobs:                       # keep queue order, drop repeats
+        name = re.sub(r"[^a-z0-9_-]", "", (job.get("player") or "").lower())
+        if name and name not in names:
+            names.append(name)
+    if not names:
+        return "wow_moments"
+    joined = "-".join(names)
+    return joined if len(joined) <= 40 else "mixed"
+
+
 def delete_output(job: dict):
     if job.get("file"):
         try:
@@ -956,7 +981,9 @@ async def download_all():
     if not ready:
         return JSONResponse(status_code=404, content={"error": "No finished renders to download yet."})
 
+    # on-disk name stays unique so two downloads can't collide mid-zip
     zip_path = TEMP_DIR / f"wow_moments_{int(time.time())}.zip"
+    download_name = f"{time.strftime('%Y-%m-%d')}_{zip_influencer_name(ready)}.zip"
     used_names: set[str] = set()
     # ZIP_STORED: mp4s don't compress, and Railway's memory budget is tight
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED, allowZip64=True) as zf:
@@ -971,7 +998,7 @@ async def download_all():
     return FileResponse(
         zip_path,
         media_type="application/zip",
-        filename=zip_path.name,
+        filename=download_name,
         background=BackgroundTask(lambda: zip_path.unlink(missing_ok=True)),
     )
 

@@ -1,0 +1,16 @@
+# Secrets — local only, mirrored into Railway's Variables
+.env
+.env.local
+!.env.example
+
+# Local Claude Code context
+CLAUDE.md
+.claude/settings.local.json
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
