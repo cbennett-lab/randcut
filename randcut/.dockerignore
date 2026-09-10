@@ -1,0 +1,19 @@
+# Keep secrets and local state out of the image — the Dockerfile does COPY . .
+# Railway builds from git (where these are already ignored), but a local
+# `docker build` would otherwise bake .env straight into a layer.
+.env
+.env.*
+!.env.example
+state/
+
+# Render artifacts — large and never wanted in an image
+outputs/
+temp/
+
+# Local tooling
+.venv/
+__pycache__/
+*.py[cod]
+.git/
+.gitignore
+.DS_Store

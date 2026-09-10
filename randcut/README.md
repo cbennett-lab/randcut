@@ -33,17 +33,40 @@ The app uses Google's Drive API to list your videos. You need a free API key:
 
 ---
 
-## Deploy to Railway (Recommended)
+## Deploy to Railway
 
-1. Push this folder to a GitHub repo
-2. Go to https://railway.app → New Project → Deploy from GitHub
-3. Select your repo
-4. Go to your project → **Variables** → Add:
+1. Push to GitHub, then Railway → New Project → Deploy from GitHub.
+
+2. **Add a volume.** The signed-in Google credential is stored on disk, and
+   Railway's filesystem is otherwise wiped on every redeploy. Open the Command
+   Palette (⌘K) or right-click the project canvas → **Volume**, attach it to the
+   service, and set the mount path to:
    ```
-   GOOGLE_API_KEY = your_api_key_here
+   /app/state
    ```
-5. Railway builds and deploys automatically (~2 min)
-6. Click the generated URL → you're live
+   The Dockerfile's workdir is `/app` and the store defaults to `./state`, so that
+   path needs no extra configuration. (Or mount anywhere and point
+   `RANDCUT_STATE_DIR` at it.)
+
+3. **Set Variables** (Project → Variables):
+   ```
+   GOOGLE_CLIENT_ID      = <from Google Cloud>
+   GOOGLE_CLIENT_SECRET  = <from Google Cloud>
+   OAUTH_REDIRECT_URI    = https://<your-app>.up.railway.app/auth/callback
+   ALLOWED_DOMAIN        = gymclassvr.com
+   SECRET_KEY            = <fresh 48-byte token, not the local one>
+   ```
+   Do **not** set `DEV_NO_AUTH` — that disables the login gate. `GOOGLE_API_KEY`
+   is not needed; Drive comes from the signed-in account.
+
+4. **Register the production redirect URI** on the same OAuth client in Google
+   Cloud, alongside the localhost one. It must match `OAUTH_REDIRECT_URI` exactly.
+
+5. Open the URL → sign in → check **Connections**. The first sign-in is what
+   connects Drive.
+
+Keep the service at **one replica**. Volumes are incompatible with replicas, and
+the render queue is in-process with a single ffmpeg worker by design.
 
 ---
 
@@ -54,7 +77,7 @@ The app uses Google's Drive API to list your videos. You need a free API key:
 brew install ffmpeg        # Mac
 sudo apt install ffmpeg    # Ubuntu/Linux
 
-# Put your API key in randcut/.env  (copy the template, then fill it in)
+# Put your Drive API key in randcut/.env  (copy the template, then fill it in)
 cp randcut/.env.example randcut/.env
 
 # Launch — creates .venv, installs deps, serves with autoreload
@@ -63,9 +86,41 @@ cp randcut/.env.example randcut/.env
 
 Then open http://localhost:8000.
 
-`.env` is gitignored, so your key never gets committed. `main.py` loads it at import
+The template ships with `DEV_NO_AUTH=1`, which skips the login gate and reads Drive
+with `GOOGLE_API_KEY` — so local development needs no OAuth setup. `run.sh` generates
+a `SECRET_KEY` on first run. **Never set `DEV_NO_AUTH` on the deployed app**; it makes
+the URL public.
+
+`.env` is gitignored, so your keys never get committed. `main.py` loads it at import
 time and never overrides variables already in the environment — which is why the same
 code picks up Railway's Variables in production with no changes.
+
+To exercise the real sign-in flow locally, fill in the OAuth variables and remove
+`DEV_NO_AUTH`.
+
+---
+
+## Sign-in (deployed app)
+
+The Railway URL is public, so the app requires a Google sign-in restricted to one
+Workspace domain. The same consent grants Drive access, so **production needs no Drive
+API key**.
+
+1. Google Cloud → **APIs & Services → OAuth consent screen**. Set User Type to
+   **Internal** — only your Workspace can sign in, no verification review is needed,
+   and refresh tokens don't expire.
+2. **Credentials → Create Credentials → OAuth client ID → Web application.** Add an
+   authorised redirect URI of `https://<your-app>.up.railway.app/auth/callback`.
+3. In Railway → **Variables**, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+   `OAUTH_REDIRECT_URI` (matching step 2 exactly), `ALLOWED_DOMAIN`, and a
+   `SECRET_KEY` from `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`.
+4. Add a **volume** mounted where `RANDCUT_STATE_DIR` points. Saved credentials live
+   there; without it a redeploy means reconnecting Google once.
+5. Open the app, sign in, and check the **Connections** tab.
+
+Buffer has no sign-in link — Buffer closed new OAuth app registration in 2019 and its
+current API is personal-key only, so you paste a personal access token into the
+Connections panel. It's stored encrypted. Nothing posts to Buffer yet.
 
 ---
 

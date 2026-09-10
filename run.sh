@@ -31,8 +31,35 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-if ! grep -qE '^GOOGLE_API_KEY=.+' .env; then
-  echo "GOOGLE_API_KEY is empty in randcut/.env — the app can't reach Drive without it." >&2
+# SECRET_KEY signs session cookies and encrypts saved credentials, so it's
+# needed in every mode. Generate one on first run rather than making it a chore.
+if ! grep -qE '^SECRET_KEY=.+' .env; then
+  echo "Generating SECRET_KEY in randcut/.env ..."
+  python3 - <<'PY'
+import pathlib, re, secrets
+p = pathlib.Path(".env")
+text = p.read_text()
+line = "SECRET_KEY=" + secrets.token_urlsafe(48)
+if re.search(r"(?m)^SECRET_KEY=.*$", text):
+    text = re.sub(r"(?m)^SECRET_KEY=.*$", line, text)
+else:
+    text = text.rstrip("\n") + "\n" + line + "\n"
+p.write_text(text)
+PY
+fi
+
+# Locally we run with the login gate off and read Drive with the API key.
+# Set the OAuth vars instead to exercise the real sign-in flow.
+if grep -qE '^DEV_NO_AUTH=1' .env; then
+  if ! grep -qE '^GOOGLE_API_KEY=.+' .env; then
+    echo "GOOGLE_API_KEY is empty in randcut/.env — with DEV_NO_AUTH=1 the app reads Drive" >&2
+    echo "with that key. Add it, or configure the OAuth vars and unset DEV_NO_AUTH." >&2
+    exit 1
+  fi
+  echo "note: DEV_NO_AUTH=1 — login gate is OFF (local only)"
+elif ! grep -qE '^SECRET_KEY=.+' .env || ! grep -qE '^GOOGLE_CLIENT_ID=.+' .env; then
+  echo "Sign-in needs GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and SECRET_KEY in randcut/.env" >&2
+  echo "(or set DEV_NO_AUTH=1 to skip the gate locally)." >&2
   exit 1
 fi
 

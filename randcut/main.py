@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
+from fastapi.responses import (FileResponse, JSONResponse, RedirectResponse,
+                               StreamingResponse, Response)
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.background import BackgroundTask
 import subprocess
@@ -8,6 +9,8 @@ import uuid
 import os
 import random
 import re
+import secrets
+from urllib.parse import quote
 import requests
 import threading
 import queue
@@ -22,6 +25,10 @@ try:
     load_dotenv(Path(__file__).parent / ".env")
 except ImportError:
     pass  # not installed in prod images built before dotenv was added
+
+# Imported *after* load_dotenv: auth reads its config at module level, so it
+# would otherwise never see anything from .env.
+import auth  # noqa: E402
 
 app = FastAPI()
 
@@ -57,6 +64,9 @@ job_status = {}
 # Jobs run one at a time on a single worker thread — Railway's memory ceiling
 # can't handle two ffmpeg passes at once.
 MAX_BATCH = 20
+
+# Cookies go Secure in production; plain http://localhost would reject them.
+REQUIRE_SECURE_COOKIES = os.environ.get("OAUTH_REDIRECT_URI", "").startswith("https://")
 
 WORK_QUEUE: "queue.Queue[str]" = queue.Queue()
 JOB_ORDER: list[str] = []          # submission order, drives the UI list
@@ -111,45 +121,40 @@ def extract_folder_id(link: str) -> str:
 
 
 def list_drive_files(folder_id: str, mime_prefix: str) -> list[dict]:
-    api_key = os.environ.get("GOOGLE_API_KEY", "")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY not set in Railway environment variables.")
+    extra, headers = auth.drive_auth()
     url = "https://www.googleapis.com/drive/v3/files"
     params = {
         "q": f"'{folder_id}' in parents and mimeType contains '{mime_prefix}'",
         "fields": "files(id, name)",
-        "key": api_key,
         "pageSize": 200,
         "supportsAllDrives": "true",
         "includeItemsFromAllDrives": "true",
+        **extra,
     }
-    resp = requests.get(url, params=params, timeout=15)
+    resp = requests.get(url, params=params, headers=headers, timeout=15)
     resp.raise_for_status()
     return resp.json().get("files", [])
 
 
 def download_drive_file(file_id: str, dest: Path):
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    session = requests.Session()
-    response = session.get(url, stream=True, timeout=180)
-    token = None
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            token = value
-            break
-    if token:
-        response = session.get(url, params={"confirm": token}, stream=True, timeout=180)
-    with open(dest, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024):
-            check_cancel()
-            if chunk:
-                f.write(chunk)
+    extra, headers = auth.drive_auth()
+    # the REST media endpoint works for private files and skips the old
+    # drive.google.com/uc interstitial-cookie dance
+    url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+    params = {"alt": "media", "supportsAllDrives": "true", **extra}
+    with requests.get(url, params=params, headers=headers, stream=True, timeout=180) as response:
+        response.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                check_cancel()
+                if chunk:
+                    f.write(chunk)
 
 
 def read_drive_json(file_id: str) -> dict:
-    api_key = os.environ.get("GOOGLE_API_KEY", "")
-    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
-    resp = requests.get(url, timeout=15)
+    extra, headers = auth.drive_auth()
+    resp = requests.get(f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                        params={"alt": "media", **extra}, headers=headers, timeout=15)
     resp.raise_for_status()
     return resp.json()
 
@@ -161,10 +166,6 @@ def folder_id_to_url(folder_id: str) -> str:
 def populate_stacked_categories():
     """Auto-populate STACKED_CATEGORIES and PLAYER_IMAGE_IDS from the main Drive folder structure."""
     global STACKED_CATEGORIES, PLAYER_IMAGE_IDS
-    api_key = os.environ.get("GOOGLE_API_KEY", "")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY not set in Railway environment variables.")
-
     category_folders = list_drive_files(MAIN_DRIVE_FOLDER_ID, "application/vnd.google-apps.folder")
 
     new_image_ids = {}
@@ -279,12 +280,12 @@ def populate_stacked_categories():
 def prefetch_player_images():
     """Download all player images into memory so they serve instantly."""
     global PLAYER_IMAGE_CACHE
-    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    extra, headers = auth.drive_auth()
     new_cache = {}
     for player_key, file_id in PLAYER_IMAGE_IDS.items():
         try:
-            url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
-            resp = requests.get(url, timeout=30)
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+            resp = requests.get(url, params={"alt": "media", **extra}, headers=headers, timeout=30)
             resp.raise_for_status()
             new_cache[player_key] = (resp.content, resp.headers.get("content-type", "image/jpeg"))
             print(f"Cached player image: {player_key}")
@@ -937,6 +938,161 @@ async def influencer_inventory(player: str):
     }
 
 
+# ─────────────────────────────────────────────
+# AUTH — the app is gated because anyone with the URL would otherwise be able to
+# use the credentials the server holds.
+PUBLIC_PATHS = {"/login", "/auth/login", "/auth/callback", "/healthz"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS or not auth.enforcing() or auth.current_user(request):
+        return await call_next(request)
+    # browsers get the sign-in page, fetch() gets a 401 it can act on
+    if "text/html" in request.headers.get("accept", ""):
+        return FileResponse("static/login.html")
+    return JSONResponse(status_code=401, content={"error": "Not signed in."})
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
+
+
+@app.get("/login")
+async def login_page():
+    return FileResponse("static/login.html")
+
+
+@app.get("/auth/login")
+async def auth_login():
+    if not auth.configured():
+        return JSONResponse(status_code=503, content={
+            "error": "Sign-in is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and SECRET_KEY."})
+    url, state = auth.login_url()
+    resp = RedirectResponse(url)
+    # state round-trips in a cookie so it survives restarts and multiple workers
+    resp.set_cookie(auth.STATE_COOKIE, state, max_age=600, httponly=True,
+                    secure=REQUIRE_SECURE_COOKIES, samesite="lax")
+    return resp
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    if error:
+        return RedirectResponse(f"/login?error={quote(error)}")
+    expected = request.cookies.get(auth.STATE_COOKIE)
+    if not expected or not secrets.compare_digest(state, expected):
+        return RedirectResponse("/login?error=" + quote("Sign-in expired — please try again."))
+    try:
+        user = auth.complete_login(code)
+    except auth.AuthError as e:
+        return RedirectResponse(f"/login?error={quote(str(e))}")
+
+    resp = RedirectResponse("/")
+    resp.set_cookie(auth.SESSION_COOKIE, auth.make_session(user["email"], user["name"]),
+                    max_age=auth.SESSION_DAYS * 86400, httponly=True,
+                    secure=REQUIRE_SECURE_COOKIES, samesite="lax")
+    resp.delete_cookie(auth.STATE_COOKIE)
+    # the sign-in also (re)connected Drive, so pick up the folder tree now
+    try:
+        populate_stacked_categories()
+        threading.Thread(target=prefetch_player_images, daemon=True).start()
+    except Exception as e:
+        print(f"Warning: Could not refresh categories after sign-in: {e}")
+    return resp
+
+
+@app.post("/auth/logout")
+async def auth_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.SESSION_COOKIE)
+    return resp
+
+
+@app.get("/connections")
+async def connections(request: Request):
+    """Which integrations are wired up.
+
+    Reports presence and health only — never the credential itself.
+    """
+    user = auth.current_user(request) or {}
+    google = auth.google_connection()
+    types = len(STACKED_CATEGORIES)
+
+    if google:
+        drive = {
+            "connected": bool(types),
+            "account": google["email"],
+            "source": "signed-in account",
+            "detail": (f"{types} video {'type' if types == 1 else 'types'} loaded from Drive."
+                       if types else
+                       "Signed in, but Drive returned no video types — check the folder is shared "
+                       "with this account."),
+        }
+    elif os.environ.get("GOOGLE_API_KEY"):
+        drive = {
+            "connected": bool(types),
+            "account": None,
+            "source": "GOOGLE_API_KEY (local dev)",
+            "detail": (f"{types} video {'type' if types == 1 else 'types'} loaded via API key."
+                       if types else
+                       "API key is set but Drive returned no video types — check the key and "
+                       "folder sharing."),
+        }
+    else:
+        drive = {"connected": False, "account": None, "source": None,
+                 "detail": "Not connected. Sign in with Google to grant Drive access."}
+
+    buffer_conn = auth.buffer_connection()
+    env_buffer = bool(os.environ.get("BUFFER_ACCESS_TOKEN"))
+    buffer = {
+        # a stored key is not a working integration — publishing isn't built yet
+        "connected": False,
+        "has_key": bool(buffer_conn) or env_buffer,
+        "hint": (buffer_conn or {}).get("hint"),
+        "source": "saved in app" if buffer_conn else ("environment" if env_buffer else None),
+        "detail": ("Key saved. Publishing isn't built yet, so nothing posts to Buffer."
+                   if (buffer_conn or env_buffer)
+                   else "No key saved. Buffer has no sign-in link — paste a personal access token."),
+    }
+
+    return {
+        "user": {"email": user.get("email"), "name": user.get("name"), "dev": user.get("dev", False)},
+        "auth_enforced": auth.enforcing(),
+        "login_available": auth.configured(),
+        "storage_ready": auth.storage_ready(),
+        "services": [
+            {"key": "google_drive", "label": "Google Drive",
+             "purpose": "Reads the gameplay, IRL and music folders.",
+             "auth_style": "oauth", **drive},
+            {"key": "buffer", "label": "Buffer",
+             "purpose": "Will schedule finished highlights to social.",
+             "auth_style": "token", **buffer},
+        ],
+    }
+
+
+@app.post("/connections/buffer")
+async def save_buffer(request: Request):
+    body = await request.json()
+    try:
+        auth.save_buffer_token(body.get("token") or "")
+    except auth.AuthError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return await connections(request)
+
+
+@app.delete("/connections/{service}")
+async def remove_connection(service: str, request: Request):
+    try:
+        auth.disconnect("google" if service == "google_drive" else service)
+    except auth.AuthError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return await connections(request)
+
+
 @app.get("/player-image/{player_key}")
 async def get_player_image(player_key: str):
     if player_key not in PLAYER_IMAGE_IDS:
@@ -944,10 +1100,11 @@ async def get_player_image(player_key: str):
     if player_key in PLAYER_IMAGE_CACHE:
         content, content_type = PLAYER_IMAGE_CACHE[player_key]
         return Response(content=content, media_type=content_type)
-    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    extra, headers = auth.drive_auth()
     file_id = PLAYER_IMAGE_IDS[player_key]
-    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
-    resp = requests.get(url, stream=True, timeout=30)
+    url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+    resp = requests.get(url, params={"alt": "media", **extra}, headers=headers,
+                        stream=True, timeout=30)
     resp.raise_for_status()
     content_type = resp.headers.get("content-type", "image/jpeg")
     return StreamingResponse(resp.iter_content(chunk_size=65536), media_type=content_type)

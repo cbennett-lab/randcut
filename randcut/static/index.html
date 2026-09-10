@@ -366,6 +366,58 @@
   }
   .placeholder-msg { font-size: 13px; color: var(--muted); }
 
+  /* ─── CONNECTIONS ─── */
+  .conn-card {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 24px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 22px; margin-bottom: 12px;
+    max-width: 720px;
+  }
+  .conn-main { min-width: 0; }
+  .conn-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .conn-name {
+    font-family: 'Bebas Neue', sans-serif; font-size: 22px;
+    letter-spacing: 1px; color: var(--dark);
+  }
+  .conn-purpose { font-size: 14px; color: var(--text); margin-bottom: 4px; }
+  .conn-detail { font-size: 13px; color: var(--muted); }
+  .conn-src {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); margin-top: 8px;
+  }
+  .conn-card-stack { display: block; }
+  .conn-action { flex-shrink: 0; }
+  .conn-why {
+    margin-top: 12px; padding-top: 12px;
+    border-top: 1px solid var(--border-soft);
+    font-size: 12px; line-height: 1.5;
+  }
+  .conn-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .conn-input { width: 260px; max-width: 100%; font-family: 'Barlow', sans-serif; }
+
+  .conn-account {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+    max-width: 720px; margin-bottom: 18px;
+  }
+  .conn-account-who {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .conn-link {
+    background: none; border: none; padding: 0; cursor: pointer;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--muted);
+    transition: color 0.15s;
+  }
+  .conn-link:hover { color: var(--dark); }
+  .conn-link.danger:hover { color: #cc3333; }
+  .fm-pill.warn { color: var(--accent); }
+
   /* ─── FILE MANAGEMENT ─── */
   /* influencer on the left, back button against the right margin */
   .fm-picker {
@@ -547,9 +599,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
         <span>File Management</span>
       </button>
-      <button class="nav-item" data-tab="settings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
-        <span>Settings</span>
+      <button class="nav-item" data-tab="connections">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <span>Connections</span>
       </button>
     </nav>
   </aside>
@@ -673,13 +725,15 @@
       </div>
     </section>
 
-    <section class="tab-panel" id="tab-settings">
+    <section class="tab-panel" id="tab-connections">
       <div class="panel wide">
-        <div class="page-title">SETTINGS</div>
-        <div class="page-sub">Render defaults, titles and Drive connection.</div>
-        <div class="placeholder">
-          <div class="placeholder-title">NOTHING HERE YET</div>
-          <div class="placeholder-msg">Configuration lands in this frame.</div>
+        <div class="page-title">CONNECTIONS</div>
+        <div class="page-sub">The accounts RandCut pulls clips from and posts through.</div>
+        <div id="connList">
+          <div class="cat-loading visible">
+            <div class="cat-loading-track"><div class="cat-loading-bar"></div></div>
+            <div class="cat-loading-label">Checking connections…</div>
+          </div>
         </div>
       </div>
     </section>
@@ -855,6 +909,129 @@
       ? 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across ' + inf.display + "'s " +
         inf.cats.length + (inf.cats.length === 1 ? ' video type.' : ' video types.')
       : 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across every video type the influencer has.';
+  }
+
+  /* ─── CONNECTIONS ─────────────────────────────────────── */
+  async function loadConnections() {
+    const el = document.getElementById('connList');
+    let data;
+    try {
+      data = await fetch('/connections').then(r => r.json());
+    } catch (e) {
+      el.innerHTML = '<div class="placeholder"><div class="placeholder-title">UNAVAILABLE</div>' +
+        '<div class="placeholder-msg">' + esc(e.message) + '</div></div>';
+      return;
+    }
+    renderConnections(data);
+  }
+
+  function renderConnections(data) {
+    const cards = (data.services || []).map(s =>
+      s.auth_style === 'oauth' ? googleCardHtml(s, data) : bufferCardHtml(s, data)).join('');
+    document.getElementById('connList').innerHTML = accountBarHtml(data) + cards;
+  }
+
+  function accountBarHtml(data) {
+    if (!data.auth_enforced) {
+      return '<div class="fm-note bad"><span>⚠</span><span>' +
+        '<strong>Login gate is off.</strong> Anyone who can reach this URL can use these ' +
+        'connections. That\'s expected for local dev (DEV_NO_AUTH=1); on the deployed app, set ' +
+        'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and SECRET_KEY and leave DEV_NO_AUTH unset.' +
+        '</span></div>';
+    }
+    const who = data.user && data.user.email ? esc(data.user.email) : 'unknown';
+    return '<div class="conn-account">' +
+      '<span class="conn-account-who">Signed in as ' + who + '</span>' +
+      '<button class="conn-link" onclick="signOut()">Sign out</button>' +
+    '</div>';
+  }
+
+  function googleCardHtml(s, data) {
+    const pill = s.connected
+      ? '<span class="fm-pill ok"><span class="fm-mark">✓</span>Connected</span>'
+      : '<span class="fm-pill no"><span class="fm-mark">✕</span>Not connected</span>';
+    const account = s.account ? '<div class="conn-src">Account: ' + esc(s.account) + '</div>' : '';
+    const src = s.source ? '<div class="conn-src">Credential: ' + esc(s.source) + '</div>' : '';
+    /* the sign-in link is the connect action — no key to paste */
+    const action = data.login_available
+      ? '<a class="btn btn-secondary btn-sm" href="/auth/login">' +
+        (s.account ? 'Reconnect' : 'Connect Google') + '</a>'
+      : '<span class="conn-detail">Set GOOGLE_CLIENT_ID / SECRET to enable sign-in.</span>';
+
+    return '<div class="conn-card">' +
+      '<div class="conn-main">' +
+        '<div class="conn-head"><span class="conn-name">' + esc(s.label) + '</span>' + pill + '</div>' +
+        '<div class="conn-purpose">' + esc(s.purpose) + '</div>' +
+        '<div class="conn-detail">' + esc(s.detail) + '</div>' +
+        account + src +
+      '</div>' +
+      '<div class="conn-action">' + action + '</div>' +
+    '</div>';
+  }
+
+  function bufferCardHtml(s, data) {
+    const pill = s.has_key
+      ? '<span class="fm-pill warn"><span class="fm-mark">•</span>Key saved</span>'
+      : '<span class="fm-pill no"><span class="fm-mark">✕</span>Not connected</span>';
+    const hint = s.hint ? '<div class="conn-src">Stored key ends ••••' + esc(s.hint) + '</div>' : '';
+    const src = s.source ? '<div class="conn-src">Credential: ' + esc(s.source) + '</div>' : '';
+    const remove = s.has_key
+      ? '<button class="conn-link danger" onclick="removeBuffer()">Remove key</button>' : '';
+
+    /* saving encrypts with SECRET_KEY — without it, don't offer a doomed button */
+    const form = data.storage_ready
+      ? '<div class="conn-form">' +
+          '<input type="password" class="seed-input conn-input" id="bufferToken" ' +
+            'placeholder="Buffer access token" autocomplete="off">' +
+          '<button class="btn btn-secondary btn-sm" onclick="saveBuffer()">Save key</button>' +
+          remove +
+        '</div>'
+      : '<div class="fm-note bad"><span>⚠</span><span>Set <strong>SECRET_KEY</strong> in the ' +
+        'environment before saving keys — it encrypts them at rest. ' +
+        '<code>./run.sh</code> generates one for you locally.</span></div>';
+
+    return '<div class="conn-card conn-card-stack">' +
+      '<div class="conn-main">' +
+        '<div class="conn-head"><span class="conn-name">' + esc(s.label) + '</span>' + pill + '</div>' +
+        '<div class="conn-purpose">' + esc(s.purpose) + '</div>' +
+        '<div class="conn-detail">' + esc(s.detail) + '</div>' +
+        hint + src +
+        '<div class="conn-detail conn-why">Buffer closed new OAuth app registration in 2019 and its ' +
+          'current API is personal-key only, so this one has no sign-in link.</div>' +
+        form +
+        '<div class="form-error" id="bufferError"></div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  async function saveBuffer() {
+    const input = document.getElementById('bufferToken');
+    const err = document.getElementById('bufferError');
+    err.classList.remove('visible');
+    try {
+      const res = await fetch('/connections/buffer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: input.value }),
+      });
+      const data = await res.json();
+      if (data.error) { err.textContent = data.error; err.classList.add('visible'); return; }
+      renderConnections(data);
+    } catch (e) {
+      err.textContent = e.message;
+      err.classList.add('visible');
+    }
+  }
+
+  async function removeBuffer() {
+    if (!confirm('Remove the stored Buffer key?')) return;
+    const data = await fetch('/connections/buffer', { method: 'DELETE' }).then(r => r.json());
+    renderConnections(data);
+  }
+
+  async function signOut() {
+    await fetch('/auth/logout', { method: 'POST' });
+    location.href = '/login';
   }
 
   /* ─── FILE MANAGEMENT ─────────────────────────────────── */
@@ -1237,6 +1414,7 @@
   }
 
   loadInfluencers();
+  loadConnections();
   pollQueue();
 </script>
 </body>
