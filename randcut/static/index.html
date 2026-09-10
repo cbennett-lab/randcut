@@ -209,6 +209,11 @@
   .btn-secondary { background: var(--card); border-color: var(--border); color: var(--dark); }
   .btn-secondary:hover:not(:disabled) { border-color: var(--dark); background: var(--bg); }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+  /* inline variant — sits in a row rather than spanning the column */
+  .btn-sm {
+    width: auto; padding: 12px 20px;
+    font-size: 16px; letter-spacing: 2px; white-space: nowrap;
+  }
 
   .form-error {
     font-family: 'Barlow', sans-serif; font-size: 13px; font-weight: 500;
@@ -361,10 +366,139 @@
   }
   .placeholder-msg { font-size: 13px; color: var(--muted); }
 
+  /* ─── FILE MANAGEMENT ─── */
+  /* influencer on the left, back button against the right margin */
+  .fm-picker {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 24px; flex-wrap: wrap; margin-bottom: 8px;
+  }
+  .fm-picker .field { margin-bottom: 0; width: 340px; max-width: 100%; }
+
+  .fm-group { margin-top: 32px; }
+  .fm-group-head {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 20px; flex-wrap: wrap; margin-bottom: 12px;
+  }
+  .fm-score { display: flex; align-items: baseline; gap: 9px; }
+  .fm-score-num {
+    font-family: 'Bebas Neue', sans-serif; font-size: 40px;
+    letter-spacing: 1px; line-height: 0.9; color: var(--dark);
+  }
+  .fm-score-lbl {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .fm-source {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .fm-meter {
+    height: 5px; background: var(--border-soft); border-radius: 3px;
+    overflow: hidden; margin-bottom: 18px;
+  }
+  .fm-meter-bar { height: 100%; background: var(--green); border-radius: 3px; transition: width 0.4s ease; }
+
+  .fm-note {
+    display: flex; align-items: flex-start; gap: 9px;
+    border-left: 2px solid var(--accent); background: var(--bg);
+    padding: 10px 14px; border-radius: 0 6px 6px 0;
+    font-size: 13px; color: var(--text); margin-bottom: 18px; line-height: 1.5;
+  }
+  .fm-note.bad { border-left-color: #cc3333; }
+  .fm-note-files {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; letter-spacing: 0.5px; color: var(--muted);
+  }
+
+  .fm-table-wrap {
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  table.fm-table { width: 100%; border-collapse: collapse; }
+  .fm-table th {
+    background: var(--bg); text-align: left;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted); white-space: nowrap;
+  }
+  .fm-table td {
+    padding: 11px 16px; border-bottom: 1px solid var(--border-soft);
+    font-size: 14px; color: var(--text); vertical-align: middle;
+  }
+  .fm-table tr:last-child td { border-bottom: none; }
+  .fm-table tbody tr:hover { background: var(--bg); }
+  .fm-table tr.unmatched td { background: rgba(204,51,51,0.04); }
+  .fm-table tr.unmatched:hover td { background: rgba(204,51,51,0.07); }
+
+  .fm-num {
+    font-family: 'Bebas Neue', sans-serif; font-size: 17px;
+    letter-spacing: 1px; color: var(--muted); width: 62px;
+  }
+  .fm-file { font-family: 'Barlow Condensed', sans-serif; font-size: 14px; letter-spacing: 0.4px; }
+  .fm-file.none { color: var(--muted); font-style: italic; }
+  .fm-status { width: 116px; white-space: nowrap; }
+  .fm-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+  }
+  .fm-pill.ok { color: var(--green); }
+  .fm-pill.no { color: #cc3333; }
+  .fm-mark { font-size: 14px; line-height: 1; }
+
+  /* summary rows — click to drill into a video type */
+  tr.fm-clickable { cursor: pointer; }
+  tr.fm-clickable:focus-visible {
+    outline: 2px solid var(--dark); outline-offset: -2px;
+  }
+  tr.fm-clickable:hover .fm-chev { color: var(--dark); transform: translateX(2px); }
+  .fm-type-name {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 17px; font-weight: 600; letter-spacing: 0.5px;
+    text-transform: uppercase; color: var(--dark);
+  }
+  .fm-row-note {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); margin-top: 2px;
+  }
+  .fm-count { width: 96px; white-space: nowrap; }
+  .fm-count-num {
+    font-family: 'Bebas Neue', sans-serif; font-size: 22px;
+    letter-spacing: 1px; color: var(--dark);
+  }
+  .fm-meter-cell { width: 30%; min-width: 90px; }
+  .fm-meter.tight { margin-bottom: 0; }
+  .fm-chev {
+    width: 24px; text-align: right;
+    font-size: 20px; color: var(--border); line-height: 1;
+    transition: color 0.15s, transform 0.15s;
+  }
+
+  /* detail header */
+  .fm-back { display: none; }
+  .fm-back.visible { display: block; }
+  .fm-detail-title {
+    font-family: 'Bebas Neue', sans-serif; font-size: 30px;
+    letter-spacing: 1.5px; line-height: 1; color: var(--dark);
+    margin-top: 34px;
+  }
+  .fm-detail-sub {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted); margin-top: 5px;
+  }
+  .fm-detail-title + .fm-detail-sub + .fm-group { margin-top: 22px; }
+
   /* ─── RESPONSIVE ─── */
   @media (max-width: 1180px) {
     :root { --sidebar-w: 200px; --rail-w: 300px; }
     .content { padding: 40px 28px 64px; }
+  }
+  @media (max-width: 1180px) {
+    .fm-table-wrap { overflow-x: auto; }
   }
   @media (max-width: 900px) {
     body { overflow: auto; }
@@ -505,10 +639,36 @@
     <section class="tab-panel" id="tab-files">
       <div class="panel wide">
         <div class="page-title">FILE MANAGEMENT</div>
-        <div class="page-sub">Source clips, players and music pulled from Google Drive.</div>
-        <div class="placeholder">
-          <div class="placeholder-title">NOTHING HERE YET</div>
-          <div class="placeholder-msg">Drive browsing and clip management land in this frame.</div>
+        <div class="page-sub">Which gameplay clips have a matching IRL clip for this influencer.</div>
+
+        <div class="fm-picker">
+          <div class="field">
+            <div class="field-label">Influencer</div>
+            <div class="field-row">
+              <div class="select-wrap">
+                <select id="fmInfluencerSelect" onchange="onFmInfluencerChange()">
+                  <option value="">Loading…</option>
+                </select>
+              </div>
+              <img class="avatar" id="fmAvatar" alt="">
+            </div>
+          </div>
+          <!-- only shown while a video type is expanded -->
+          <button class="btn btn-secondary btn-sm fm-back" id="fmBackBtn" onclick="backToTypes()">
+            ← Back to Summary
+          </button>
+        </div>
+
+        <div class="cat-loading" id="fmLoading">
+          <div class="cat-loading-track"><div class="cat-loading-bar"></div></div>
+          <div class="cat-loading-label">Reading Google Drive…</div>
+        </div>
+
+        <div id="fmResult">
+          <div class="placeholder">
+            <div class="placeholder-title">PICK AN INFLUENCER</div>
+            <div class="placeholder-msg">Choose an influencer and a video type to see their clip coverage.</div>
+          </div>
         </div>
       </div>
     </section>
@@ -611,9 +771,10 @@
       loader.classList.remove('visible');
     }
 
-    const sel = document.getElementById('influencerSelect');
+    const selects = [document.getElementById('influencerSelect'),
+                     document.getElementById('fmInfluencerSelect')];
     if (!Array.isArray(cats)) {
-      sel.innerHTML = '<option value="">Unavailable</option>';
+      selects.forEach(s => s.innerHTML = '<option value="">Unavailable</option>');
       return;
     }
 
@@ -626,10 +787,40 @@
     });
 
     const list = Object.values(influencers).sort((a, b) => a.display.localeCompare(b.display));
-    sel.innerHTML = '<option value="">Select an influencer</option>' +
-      list.map(i => '<option value="' + esc(i.key) + '">' + esc(i.display) + '</option>').join('');
-    if (!list.length) sel.innerHTML = '<option value="">No influencers found</option>';
+    const html = list.length
+      ? '<option value="">Select an influencer</option>' +
+        list.map(i => '<option value="' + esc(i.key) + '">' + esc(i.display) + '</option>').join('')
+      : '<option value="">No influencers found</option>';
+    selects.forEach(s => s.innerHTML = html);
     updateButtons();
+  }
+
+  /* Shared by both tabs: fill a type <select> with just this influencer's types. */
+  function fillTypeSelect(sel, inf, keepKey) {
+    if (!inf) {
+      sel.disabled = true;
+      sel.innerHTML = '<option value="">Select an influencer first</option>';
+      return null;
+    }
+    sel.disabled = false;
+    sel.innerHTML = '<option value="">Select a video type</option>' +
+      inf.cats.map(c => '<option value="' + esc(c.key) + '">' + esc(c.label) + '</option>').join('');
+    const kept = inf.cats.some(c => c.key === keepKey) ? keepKey : null;
+    sel.value = kept || '';
+    return kept;
+  }
+
+  /* Shared by both tabs: point an <img> at the influencer's avatar, hiding it on 404. */
+  function setAvatar(img, inf) {
+    if (!inf) {
+      img.classList.remove('visible');
+      img.removeAttribute('src');
+      return;
+    }
+    img.onerror = () => img.classList.remove('visible');
+    img.onload = () => img.classList.add('visible');
+    img.src = '/player-image/' + encodeURIComponent(inf.key);
+    img.alt = inf.display;
   }
 
   function onInfluencerChange() {
@@ -638,32 +829,9 @@
     selectedPlayer = key || null;
     const inf = influencers[key];
 
-    const avatar = document.getElementById('avatar');
-    if (inf) {
-      avatar.onerror = () => avatar.classList.remove('visible');
-      avatar.onload = () => avatar.classList.add('visible');
-      avatar.src = '/player-image/' + encodeURIComponent(inf.key);
-      avatar.alt = inf.display;
-    } else {
-      avatar.classList.remove('visible');
-      avatar.removeAttribute('src');
-    }
-
+    setAvatar(document.getElementById('avatar'), inf);
     /* Only the types this influencer actually has clips for. */
-    const typeSel = document.getElementById('typeSelect');
-    const previous = selectedCategory;
-    if (!inf) {
-      typeSel.disabled = true;
-      typeSel.innerHTML = '<option value="">Select an influencer first</option>';
-      selectedCategory = null;
-    } else {
-      typeSel.disabled = false;
-      typeSel.innerHTML = '<option value="">Select a video type</option>' +
-        inf.cats.map(c => '<option value="' + esc(c.key) + '">' + esc(c.label) + '</option>').join('');
-      /* keep the old pick if this influencer has it too */
-      selectedCategory = inf.cats.some(c => c.key === previous) ? previous : null;
-      typeSel.value = selectedCategory || '';
-    }
+    selectedCategory = fillTypeSelect(document.getElementById('typeSelect'), inf, selectedCategory);
 
     const hint = document.getElementById('typeHint');
     hint.textContent = inf
@@ -687,6 +855,186 @@
       ? 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across ' + inf.display + "'s " +
         inf.cats.length + (inf.cats.length === 1 ? ' video type.' : ' video types.')
       : 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across every video type the influencer has.';
+  }
+
+  /* ─── FILE MANAGEMENT ─────────────────────────────────── */
+  let fmPlayer = null;
+  let fmData = null;        // the whole per-influencer report, clip rows included
+  let fmOpenType = null;    // key of the expanded video type, null = summary view
+  let fmRequestId = 0;      // guards against a slow response overwriting a newer one
+
+  function onFmInfluencerChange() {
+    fmPlayer = document.getElementById('fmInfluencerSelect').value || null;
+    setAvatar(document.getElementById('fmAvatar'), influencers[fmPlayer]);
+    fmData = null;
+    fmOpenType = null;
+    loadInventory();
+  }
+
+  function fmPlaceholder(title, msg) {
+    document.getElementById('fmResult').innerHTML =
+      '<div class="placeholder"><div class="placeholder-title">' + esc(title) + '</div>' +
+      '<div class="placeholder-msg">' + esc(msg) + '</div></div>';
+  }
+
+  async function loadInventory() {
+    document.getElementById('fmBackBtn').classList.remove('visible');
+    if (!fmPlayer) {
+      fmPlaceholder('Pick an influencer', 'Choose an influencer to see their clip coverage.');
+      return;
+    }
+    const reqId = ++fmRequestId;
+    const loader = document.getElementById('fmLoading');
+    loader.classList.add('visible');
+    document.getElementById('fmResult').innerHTML = '';
+    try {
+      const res = await fetch('/influencer-inventory?player=' + encodeURIComponent(fmPlayer));
+      const data = await res.json();
+      if (reqId !== fmRequestId) return;          // a newer selection already won
+      if (data.error) { fmPlaceholder('Could not read Drive', data.error); return; }
+      fmData = data;
+      renderFm();
+    } catch (e) {
+      if (reqId === fmRequestId) fmPlaceholder('Could not read Drive', e.message);
+    } finally {
+      if (reqId === fmRequestId) loader.classList.remove('visible');
+    }
+  }
+
+  function openType(key) {
+    fmOpenType = key;
+    renderFm();
+    document.querySelector('.content').scrollTop = 0;
+  }
+
+  function backToTypes() {
+    fmOpenType = null;
+    renderFm();
+  }
+
+  /* Enter/Space on a focused row behaves like a click */
+  function fmRowKey(e, key) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openType(key); }
+  }
+
+  function renderFm() {
+    if (!fmData) return;
+    const open = fmOpenType && fmData.types.find(t => t.key === fmOpenType);
+    document.getElementById('fmBackBtn').classList.toggle('visible', !!open);
+    document.getElementById('fmResult').innerHTML =
+      open ? typeDetailHtml(open) : typeSummaryHtml(fmData);
+  }
+
+  /* ── summary: one row per video type ── */
+  function typeSummaryHtml(data) {
+    if (!data.types.length) {
+      return '<div class="placeholder"><div class="placeholder-title">NO VIDEO TYPES</div>' +
+        '<div class="placeholder-msg">' + esc(data.player_label) +
+        ' has no IRL folders in Drive yet.</div></div>';
+    }
+
+    const rows = data.types.map(t => {
+      const pct = t.total ? (t.matched / t.total) * 100 : 0;
+      const status = t.error
+        ? '<span class="fm-pill no"><span class="fm-mark">!</span>Error</span>'
+        : t.short
+          ? '<span class="fm-pill no"><span class="fm-mark">✕</span>Short</span>'
+          : '<span class="fm-pill ok"><span class="fm-mark">✓</span>Ready</span>';
+      const note = t.error
+        ? '<div class="fm-row-note">' + esc(t.error) + '</div>'
+        : t.combo
+          ? '<div class="fm-row-note">Combo of ' + t.groups.length + ' types</div>'
+          : '';
+
+      return '<tr class="fm-clickable' + (t.short ? ' unmatched' : '') + '" tabindex="0"' +
+        ' onclick="openType(\'' + esc(t.key) + '\')"' +
+        ' onkeydown="fmRowKey(event, \'' + esc(t.key) + '\')">' +
+        '<td><span class="fm-type-name">' + esc(t.label) + '</span>' + note + '</td>' +
+        '<td class="fm-count"><span class="fm-count-num">' + t.matched + '/' + t.total + '</span></td>' +
+        '<td class="fm-meter-cell"><div class="fm-meter tight">' +
+          '<div class="fm-meter-bar" style="width:' + pct + '%"></div></div></td>' +
+        '<td class="fm-status">' + status + '</td>' +
+        '<td class="fm-chev">›</td>' +
+      '</tr>';
+    }).join('');
+
+    return '<div class="fm-group">' +
+      '<div class="fm-group-head">' +
+        '<div class="fm-score">' +
+          '<span class="fm-score-num">' + data.matched + '/' + data.total + '</span>' +
+          '<span class="fm-score-lbl">clips matched across ' + data.types.length +
+            (data.types.length === 1 ? ' video type' : ' video types') + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="fm-table-wrap"><table class="fm-table"><thead><tr>' +
+        '<th>Video Type</th><th>Clips Matched</th><th></th><th>Status</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    '</div>';
+  }
+
+  /* ── detail: the clip-by-clip view for one type ── */
+  function typeDetailHtml(t) {
+    const data = fmData;
+    const showSource = t.combo && t.groups.length > 1;
+    const head =
+      '<div class="fm-detail-title">' + esc(t.label) + '</div>' +
+      '<div class="fm-detail-sub">' + esc(data.player_label) + '</div>';
+
+    if (t.error) {
+      return head + '<div class="fm-note bad"><span>⚠</span><span>' + esc(t.error) + '</span></div>';
+    }
+
+    return head + t.groups.map(g => {
+      const pct = g.total ? (g.matched / g.total) * 100 : 0;
+      const short = g.matched < g.required;
+
+      const rows = g.clips.map(c => {
+        const num = c.number == null ? '—' : String(c.number).padStart(3, '0');
+        const irl = c.matched
+          ? '<span class="fm-file">' + esc(c.irl) + '</span>'
+          : '<span class="fm-file none">no matching clip</span>';
+        const pill = c.matched
+          ? '<span class="fm-pill ok"><span class="fm-mark">✓</span>Matched</span>'
+          : '<span class="fm-pill no"><span class="fm-mark">✕</span>Missing</span>';
+        return '<tr' + (c.matched ? '' : ' class="unmatched"') + '>' +
+          '<td class="fm-num">' + num + '</td>' +
+          '<td><span class="fm-file">' + esc(c.gameplay) + '</span></td>' +
+          '<td>' + irl + '</td>' +
+          '<td class="fm-status">' + pill + '</td>' +
+        '</tr>';
+      }).join('');
+
+      /* a render needs `required` pairs, so falling short is the thing to flag */
+      const shortNote = short
+        ? '<div class="fm-note bad"><span>⚠</span><span>Only ' + g.matched +
+          ' matched ' + (g.matched === 1 ? 'pair' : 'pairs') + ' — a render of this type needs ' +
+          g.required + '. Fix the filenames or add the missing IRL clips.</span></div>'
+        : '';
+
+      const orphanNote = g.orphan_irl.length
+        ? '<div class="fm-note"><span>i</span><span>' + g.orphan_irl.length +
+          ' IRL ' + (g.orphan_irl.length === 1 ? 'clip has' : 'clips have') +
+          ' no gameplay clip to pair with — usually a numbering typo.' +
+          '<div class="fm-note-files">' + g.orphan_irl.map(esc).join(' · ') + '</div></span></div>'
+        : '';
+
+      return '<div class="fm-group">' +
+        '<div class="fm-group-head">' +
+          '<div class="fm-score">' +
+            '<span class="fm-score-num">' + g.matched + '/' + g.total + '</span>' +
+            '<span class="fm-score-lbl">clips matched</span>' +
+          '</div>' +
+          (showSource ? '<div class="fm-source">from ' + esc(g.source_label) + '</div>' : '') +
+        '</div>' +
+        '<div class="fm-meter"><div class="fm-meter-bar" style="width:' + pct + '%"></div></div>' +
+        shortNote + orphanNote +
+        (g.total
+          ? '<div class="fm-table-wrap"><table class="fm-table"><thead><tr>' +
+            '<th>Clip</th><th>Gameplay</th><th>IRL — ' + esc(data.player_label) + '</th><th>Status</th>' +
+            '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+          : '<div class="placeholder"><div class="placeholder-msg">No gameplay clips in this folder.</div></div>') +
+      '</div>';
+    }).join('');
   }
 
   /* ─── ADVANCED ─── */

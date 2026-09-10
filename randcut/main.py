@@ -830,6 +830,113 @@ async def get_stacked_categories():
     return result
 
 
+def pairing_rows(vr_files: list[dict], irl_files: list[dict], player_key: str) -> tuple[list[dict], list[str]]:
+    """One row per gameplay clip, flagged with whether this player has a matching IRL clip.
+
+    Uses match_irl_clip — the same matcher the render pipelines use — so what this
+    reports is exactly what a render would find.
+    """
+    rows = []
+    paired_irl_ids = set()
+    for vr in vr_files:
+        irl = match_irl_clip(vr["name"], irl_files, player_key)
+        if irl:
+            paired_irl_ids.add(irl["id"])
+        rows.append({
+            "number": clip_number(vr["name"]),
+            "gameplay": vr["name"],
+            "irl": irl["name"] if irl else None,
+            "matched": irl is not None,
+        })
+    # unnumbered clips can never pair, so they sort to the bottom
+    rows.sort(key=lambda r: (r["number"] is None, r["number"] or 0, r["gameplay"]))
+
+    # IRL clips no gameplay clip points at — usually a filename typo
+    orphans = sorted(f["name"] for f in irl_files if f["id"] not in paired_irl_ids)
+    return rows, orphans
+
+
+def inventory_group(cat: dict, player_key: str, required: int, cache: dict) -> dict:
+    """Pairing report for one plain category (a combo contributes one of these per segment)."""
+    def videos(folder_url: str) -> list[dict]:
+        # combos re-reference folders their standalone types already listed
+        folder_id = extract_folder_id(folder_url)
+        if folder_id not in cache:
+            cache[folder_id] = list_drive_files(folder_id, "video/")
+        return cache[folder_id]
+
+    rows, orphans = pairing_rows(
+        videos(cat["vr_folder"]),
+        videos(cat["players"][player_key]["irl_folder"]),
+        player_key,
+    )
+    return {
+        "source_label": cat["label"],
+        "required": required,
+        "total": len(rows),
+        "matched": sum(1 for r in rows if r["matched"]),
+        "clips": rows,
+        "orphan_irl": orphans,
+    }
+
+
+def category_inventory(cat_key: str, cat: dict, player_key: str, cache: dict) -> dict:
+    """One video type, rolled up. A combo owns no clips, so it reports one group per
+    recipe segment and totals them."""
+    if cat.get("type") == "combo":
+        groups = []
+        for segment in cat["recipe"]["segments"]:
+            src_key = segment["source"].lower().replace(" ", "_")
+            src_cat = STACKED_CATEGORIES.get(src_key)
+            if src_cat is None:
+                raise ValueError(f"Combo source '{segment['source']}' is missing from Drive.")
+            groups.append(inventory_group(src_cat, player_key, segment.get("count", 0), cache))
+    else:
+        groups = [inventory_group(cat, player_key, NUM_PAIRS, cache)]
+
+    return {
+        "key": cat_key,
+        "label": cat["label"],
+        "combo": cat.get("type") == "combo",
+        "matched": sum(g["matched"] for g in groups),
+        "total": sum(g["total"] for g in groups),
+        "short": any(g["matched"] < g["required"] for g in groups),
+        "groups": groups,
+    }
+
+
+@app.get("/influencer-inventory")
+async def influencer_inventory(player: str):
+    """Pairing status for every video type this influencer appears in.
+
+    Returns the per-clip rows too, so the UI can expand a type without another
+    round trip to Drive.
+    """
+    cats = [(k, c) for k, c in STACKED_CATEGORIES.items() if player in c["players"]]
+    if not cats:
+        return JSONResponse(status_code=400, content={"error": f"Unknown player: {player}"})
+
+    player_label = cats[0][1]["players"][player]["display"]
+    cache: dict[str, list[dict]] = {}
+    types = []
+    for cat_key, cat in cats:
+        try:
+            types.append(category_inventory(cat_key, cat, player, cache))
+        except (ValueError, KeyError, requests.HTTPError) as e:
+            # one broken folder shouldn't blank out the whole report
+            types.append({"key": cat_key, "label": cat["label"], "combo": cat.get("type") == "combo",
+                          "matched": 0, "total": 0, "short": True, "groups": [], "error": str(e)})
+
+    types.sort(key=lambda t: t["label"].lower())
+    return {
+        "player": player,
+        "player_label": player_label,
+        "matched": sum(t["matched"] for t in types),
+        "total": sum(t["total"] for t in types),
+        "types": types,
+    }
+
+
 @app.get("/player-image/{player_key}")
 async def get_player_image(player_key: str):
     if player_key not in PLAYER_IMAGE_IDS:
