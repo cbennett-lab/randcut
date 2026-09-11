@@ -312,6 +312,59 @@
     font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase;
     color: var(--muted); flex-shrink: 0;
   }
+
+  /* Post sits between the status line and the layout tag */
+  .q-post-slot { flex: 0 0 auto; }
+  .q-post {
+    flex: 0 0 auto; cursor: pointer;
+    background: var(--card); border: 1px solid var(--border); border-radius: 5px;
+    padding: 3px 11px; color: var(--dark);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .q-post:hover:not(:disabled) { border-color: var(--dark); background: var(--bg); }
+  .q-post:disabled { cursor: default; }
+  .q-post.working { color: var(--accent); border-color: var(--accent); }
+  .q-post.done { color: var(--green); border-color: rgba(42,122,74,0.45); background: rgba(42,122,74,0.06); }
+  .q-post.partial { color: var(--accent2); border-color: var(--accent2); }
+  .q-post.failed { color: #cc3333; border-color: #cc3333; }
+  .q-post.queued { color: var(--green); border-color: rgba(42,122,74,0.45); }
+
+  /* ─── POSTING TAB ─── */
+  .nav-badge {
+    margin-left: auto; min-width: 19px; padding: 1px 6px; border-radius: 100px;
+    background: var(--accent); color: #1a1a1a; text-align: center;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  }
+  .nav-item.active .nav-badge { background: var(--accent); color: #1a1a1a; }
+  .pt-sub {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); margin-top: 3px;
+  }
+  .pt-to { width: 190px; }
+  .pt-handle {
+    display: flex; align-items: center; gap: 7px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px; letter-spacing: 0.5px; color: var(--text);
+    padding: 1px 0; white-space: nowrap;
+  }
+  .pt-handle.ok { color: var(--green); }
+  .pt-handle.failed { color: #cc3333; text-decoration: line-through; }
+  .pt-icon { width: 14px; height: 14px; flex-shrink: 0; color: var(--muted); }
+  .pt-handle.ok .pt-icon { color: var(--green); }
+  .pt-handle.failed .pt-icon { color: #cc3333; }
+  .pt-caption { max-width: 380px; }
+  .pt-caption-text { font-size: 13px; line-height: 1.45; }
+  .pt-note {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase;
+    color: var(--accent2); margin-top: 5px;
+  }
+  .pt-action { width: 120px; white-space: nowrap; text-align: right; }
+  .pt-action .q-x { margin-left: 6px; vertical-align: middle; }
   .q-track {
     height: 3px; background: var(--border-soft); border-radius: 2px;
     position: relative; overflow: hidden; margin-top: 8px;
@@ -738,6 +791,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5l6 3.5-6 3.5z" fill="currentColor" stroke="none"/></svg>
         <span>Generate</span>
       </button>
+      <button class="nav-item" data-tab="posting">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 3.5L2.5 10.5l7 2.5 2.5 7z"/><path d="M21.5 3.5L9.5 13"/></svg>
+        <span>Posting</span><span class="nav-badge" id="postingBadge" hidden></span>
+      </button>
       <button class="nav-item" data-tab="analytics">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M4 16l5-6 4 3 6-8"/></svg>
         <span>Analytics</span>
@@ -821,6 +878,32 @@
         <div class="field-hint" id="weekHint">Standard Week queues 7 renders spread across every video type the influencer has.</div>
 
         <div class="form-error" id="formError"></div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-posting">
+      <div class="panel wide">
+        <div class="an-head">
+          <div>
+            <div class="page-title">POSTING</div>
+            <div class="page-sub">Review what goes to Buffer, then send it.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="postAllBtn" onclick="sendAllPosts()">
+            Post All
+          </button>
+        </div>
+
+        <div class="cat-loading" id="postLoading">
+          <div class="cat-loading-track"><div class="cat-loading-bar"></div></div>
+          <div class="cat-loading-label">Sending to Buffer…</div>
+        </div>
+
+        <div id="postResult">
+          <div class="placeholder">
+            <div class="placeholder-title">NOTHING QUEUED</div>
+            <div class="placeholder-msg">Hit Post on a finished render to queue it here.</div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -933,6 +1016,7 @@
   let seedRandom = true;
   let seedValue = null;
   let pollInterval = null;
+  let lastQueue = { jobs: [] };   // latest snapshot, for optimistic updates
 
   /* ─── TABS — read off the nav, so a new tab is just a button + a section ─── */
   const tabNames = [...document.querySelectorAll('.nav-item')].map(b => b.dataset.tab);
@@ -951,6 +1035,7 @@
     /* Buffer allows only a few thousand requests a month, so pull on first
        open rather than on every page load. */
     if (name === 'analytics' && !anLoaded) loadAnalytics(false);
+    if (name === 'posting') loadPosts();
   }
 
   document.querySelectorAll('.nav-item').forEach(btn => {
@@ -1073,6 +1158,128 @@
       ? 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across ' + inf.display + "'s " +
         inf.cats.length + (inf.cats.length === 1 ? ' video type.' : ' video types.')
       : 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across every video type the influencer has.';
+  }
+
+  /* ─── POSTING ─────────────────────────────────────────────
+     Staged posts awaiting review. Nothing here has reached Buffer yet. */
+  let postData = { posts: [], pending: 0 };
+
+  /* simple monochrome glyphs — they only need to be recognisable at 14px */
+  const PLATFORM_ICONS = {
+    instagram: '<rect x="3" y="3" width="18" height="18" rx="5"/>' +
+               '<circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1.2" fill="currentColor"/>',
+    youtube: '<rect x="2" y="5" width="20" height="14" rx="4"/>' +
+             '<path d="M10.2 8.8l5.4 3.2-5.4 3.2z" fill="currentColor" stroke="none"/>',
+    tiktok: '<path d="M14 3.5v9.8a3.6 3.6 0 1 1-3.1-3.57"/>' +
+            '<path d="M14 3.5c.35 2.3 2 3.95 4.3 4.2"/>',
+  };
+
+  function platformIcon(service) {
+    const paths = PLATFORM_ICONS[(service || '').toLowerCase()];
+    if (!paths) return '';
+    return '<svg class="pt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+           'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>';
+  }
+
+  function updatePostingBadge() {
+    const badge = document.getElementById('postingBadge');
+    const n = (postData.posts || []).filter(p => p.status === 'pending').length;
+    badge.textContent = n;
+    badge.hidden = n === 0;
+  }
+
+  async function loadPosts(render = true) {
+    try {
+      postData = await fetch('/posts').then(r => r.json());
+    } catch (e) {
+      postData = { posts: [], pending: 0 };
+    }
+    updatePostingBadge();
+    if (render) renderPosts();
+  }
+
+  function renderPosts() {
+    updatePostingBadge();
+    const posts = postData.posts || [];
+    const sendable = posts.filter(p => p.status !== 'posted' && p.status !== 'posting');
+    document.getElementById('postAllBtn').disabled = sendable.length === 0;
+    document.getElementById('postAllBtn').textContent =
+      sendable.length > 1 ? 'Post All (' + sendable.length + ')' : 'Post All';
+
+    if (!posts.length) {
+      document.getElementById('postResult').innerHTML =
+        '<div class="placeholder"><div class="placeholder-title">NOTHING QUEUED</div>' +
+        '<div class="placeholder-msg">Hit Post on a finished render to queue it here.</div></div>';
+      return;
+    }
+
+    const rows = posts.map(p => {
+      const handles = (p.channels || []).map(c => {
+        const sent = (p.results || []).find(r => r.platform === c.service);
+        const cls = sent ? (sent.ok ? ' ok' : ' failed') : '';
+        const tip = sent ? (sent.ok ? 'Queued' + (sent.due_at ? ' for ' + new Date(sent.due_at).toLocaleString() : '')
+                                    : sent.error) : platformLabel(c.service);
+        return '<div class="pt-handle' + cls + '" title="' + esc(tip) + '">' +
+          platformIcon(c.service) + '<span>' + esc(c.name || '—') + '</span></div>';
+      }).join('');
+
+      let action;
+      if (p.status === 'posting')
+        action = '<button class="q-post working" disabled>Sending…</button>';
+      else if (p.status === 'posted')
+        action = '<button class="q-post done" disabled title="' + esc(p.message || '') + '">✓ Posted</button>';
+      else if (p.status === 'partial' || p.status === 'error')
+        action = '<button class="q-post failed" title="' + esc(p.message || '') +
+                 '" onclick="sendPost(\'' + p.post_id + '\')">Retry</button>';
+      else
+        action = '<button class="q-post" onclick="sendPost(\'' + p.post_id + '\')">Post</button>';
+
+      const note = p.message && p.status !== 'posted'
+        ? '<div class="pt-note">' + esc(p.message) + '</div>' : '';
+
+      return '<tr>' +
+        '<td><span class="fm-file">' + esc(p.video_name || '—') + '</span>' +
+          '<div class="pt-sub">' + esc(p.influencer || '') + ' · ' + esc(p.category_label || '') + '</div>' +
+        '</td>' +
+        '<td class="pt-to">' + handles + '</td>' +
+        '<td class="pt-caption"><div class="pt-caption-text">' + esc(p.caption || '') + '</div>' + note + '</td>' +
+        '<td class="pt-action">' + action +
+          '<button class="q-x" title="Remove from queue" onclick="removePost(\'' + p.post_id + '\')">✕</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+
+    document.getElementById('postResult').innerHTML =
+      '<div class="fm-table-wrap"><table class="fm-table"><thead><tr>' +
+        '<th>Video Name</th><th>Post To</th><th>Caption</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  async function postAction(url, method) {
+    const loader = document.getElementById('postLoading');
+    loader.classList.add('visible');
+    try {
+      const data = await fetch(url, { method: method }).then(r => r.json());
+      if (data.post_queue) postData = data.post_queue;
+      else if (data.posts) postData = data;
+      renderPosts();
+      if (data.error) showError(data.error);
+      pollQueue();          // the render item's Post button reflects this too
+    } catch (e) {
+      showError('Error: ' + e.message);
+    } finally {
+      loader.classList.remove('visible');
+    }
+  }
+
+  const sendPost = id => postAction('/posts/' + id + '/send', 'POST');
+  const removePost = id => postAction('/posts/' + id, 'DELETE');
+
+  function sendAllPosts() {
+    const n = (postData.posts || []).filter(p => p.status !== 'posted' && p.status !== 'posting').length;
+    if (!n) return;
+    if (!confirm('Send ' + n + ' post' + (n === 1 ? '' : 's') + ' to Buffer?')) return;
+    postAction('/posts/send-all', 'POST');
   }
 
   /* ─── ANALYTICS ───────────────────────────────────────── */
@@ -1953,8 +2160,52 @@
     } catch (e) { /* keep polling through a blip */ }
   }
 
+  /* Post lives between the status line and the layout tag, and only once a
+     render has actually finished. */
+  function postButtonHtml(j) {
+    if (j.status !== 'done') return '<div class="q-post-slot"></div>';
+    const st = j.post_status;
+    const detail = (j.post_results || []).map(r =>
+      (r.ok ? '\u2713 ' : '\u2717 ') + (r.platform || '?') +
+      (r.ok ? (r.due_at ? ' — ' + new Date(r.due_at).toLocaleString() : ' — queued')
+            : ' — ' + (r.error || 'failed'))).join('\n');
+    const title = [j.post_message, detail, j.caption ? 'Caption: ' + j.caption : '']
+      .filter(Boolean).join('\n');
+    const attrs = ' title="' + esc(title) + '"';
+
+    if (st === 'staging')
+      return '<button class="q-post working"' + attrs + ' disabled>Queueing…</button>';
+    if (st === 'queued')
+      return '<button class="q-post queued" title="In the post queue — review it on the ' +
+             'Posting tab" onclick="showTab(\'posting\')">✓ Queued</button>';
+    if (st === 'error')
+      return '<button class="q-post failed"' + attrs +
+             ' onclick="postJob(\'' + j.job_id + '\')">Retry</button>';
+    return '<button class="q-post" title="Add to the post queue for review" onclick="postJob(\'' +
+           j.job_id + '\')">Post</button>';
+  }
+
+  async function postJob(id) {
+    /* optimistic, so the rail reacts before the round trip (caption read +
+       media copy + one Buffer call per channel takes a few seconds) */
+    const job = (lastQueue.jobs || []).find(j => j.job_id === id);
+    if (job) { job.post_status = 'staging'; job.post_message = 'Queueing…'; }
+    renderQueue(lastQueue);
+    try {
+      const data = await fetch('/queue/' + id + '/post', { method: 'POST' })
+        .then(r => r.json());
+      if (data.queue) renderQueue(data.queue);
+      if (data.post_queue) { postData = data.post_queue; renderPosts(); }
+      if (data.error) { showError(data.error); pollQueue(); }
+    } catch (e) {
+      showError('Error: ' + e.message);
+      pollQueue();
+    }
+  }
+
   function renderQueue(state) {
     if (!state) return;
+    lastQueue = state;
     const body = document.getElementById('railBody');
     const jobs = state.jobs || [];
 
@@ -2001,6 +2252,7 @@
         '</div>' +
         '<div class="q-meta">' +
           '<div class="q-msg">' + esc(j.message || j.status) + '</div>' +
+          postButtonHtml(j) +
           '<div class="q-tag">' + tag + '</div>' +
         '</div>' + track +
       '</div>';
@@ -2044,6 +2296,7 @@
 
   loadInfluencers();
   loadConnections();
+  loadPosts(false);   // badge should be right before the tab is ever opened
   pollQueue();
 </script>
 </body>

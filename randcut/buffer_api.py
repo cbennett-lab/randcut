@@ -547,3 +547,66 @@ def posts_in_period(token: str, influencers: list[str], period: dict | None = No
     }
     _store(key, payload)
     return payload
+
+
+# ── publishing ───────────────────────────────────────────────────────────
+# Buffer has no upload endpoint: "The url field on each asset must point to a
+# file that is reachable over the public internet without authentication", and
+# it must stay reachable until the post publishes, which for a queued post can
+# be days later. So the caller hands us an already-public URL.
+POST_PLATFORMS = ("tiktok", "instagram", "youtube")
+
+
+def channels_for_influencer(token: str, influencer: str, influencers: list[str],
+                            overrides: dict | None = None) -> list[dict]:
+    """The influencer's channels, one per platform we publish to."""
+    org_id = organization_id(token)
+    chans = channels(token, org_id)
+    mapping, _ = map_channels(chans, influencers, overrides or {})
+    mine = [c for c in chans
+            if mapping.get(c["id"]) == influencer
+            and (c.get("service") or "").lower() in POST_PLATFORMS]
+    mine.sort(key=lambda c: POST_PLATFORMS.index((c["service"] or "").lower()))
+    return mine
+
+
+def _gql_string(value: str) -> str:
+    """Escape a Python string into a GraphQL string literal.
+
+    Captions carry emoji and quotes; json.dumps produces exactly GraphQL's
+    string syntax (and keeps non-ASCII literal, which the API accepts as UTF-8).
+    """
+    import json
+    return json.dumps(value, ensure_ascii=False)
+
+
+def create_video_post(token: str, channel_id: str, text: str, video_url: str,
+                      thumbnail_offset_ms: int = 1000) -> dict:
+    """Queue one video post into a channel's next available slot.
+
+    `mode: addToQueue` with `schedulingType: automatic` is Buffer's own way of
+    saying "next slot in this channel's posting schedule".
+    """
+    query = f"""
+    mutation RandcutCreatePost {{
+      createPost(input: {{
+        text: {_gql_string(text)},
+        channelId: "{_literal_id(channel_id)}",
+        schedulingType: automatic,
+        mode: addToQueue,
+        assets: [{{ video: {{ url: {_gql_string(video_url)},
+                              metadata: {{ thumbnailOffset: {int(thumbnail_offset_ms)} }} }} }}]
+      }}) {{
+        ... on PostActionSuccess {{ post {{ id dueAt }} }}
+        ... on MutationError {{ message }}
+      }}
+    }}
+    """
+    result = (_gql(token, query) or {}).get("createPost") or {}
+    # the union returns either a post or an error object, both HTTP 200
+    if result.get("message"):
+        raise BufferError(result["message"])
+    post = result.get("post")
+    if not post:
+        raise BufferError("Buffer accepted the request but returned no post.")
+    return post

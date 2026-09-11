@@ -10,7 +10,8 @@ import os
 import random
 import re
 import secrets
-from urllib.parse import quote
+import shutil
+from urllib.parse import quote, urlsplit
 import requests
 import threading
 import queue
@@ -160,6 +161,19 @@ def read_drive_json(file_id: str) -> dict:
     return resp.json()
 
 
+def read_drive_text(file_id: str) -> str:
+    """Fetch a Drive text file as UTF-8.
+
+    Decoded explicitly rather than via resp.text: requests guesses latin-1 for
+    text/* without a charset, which turns every emoji into mojibake.
+    """
+    extra, headers = auth.drive_auth()
+    resp = requests.get(f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                        params={"alt": "media", **extra}, headers=headers, timeout=30)
+    resp.raise_for_status()
+    return resp.content.decode("utf-8-sig")      # -sig strips a BOM if Sheets/Notepad added one
+
+
 def folder_id_to_url(folder_id: str) -> str:
     return f"https://drive.google.com/drive/folders/{folder_id}?usp=sharing"
 
@@ -230,6 +244,7 @@ def populate_stacked_categories():
                 "label": cat_label,
                 "vr_folder": vr_url,
                 "music_file": music_file_id,
+                "captions_folder": subfolder_map.get("Captions"),
                 "players": players,
             }
 
@@ -270,12 +285,52 @@ def populate_stacked_categories():
                 "type": "combo",
                 "recipe": recipe,
                 "music_files": music_file_ids,
+                "captions_folder": subfolder_map.get("Captions"),
                 "players": common_players,
             }
         except Exception as e:
             print(f"Warning: Could not process combo '{cat_label}': {e}")
 
     STACKED_CATEGORIES = new_categories
+
+
+# Captions live in <Category>/Captions/<a text file>, one caption per line.
+_CAPTION_CACHE: dict[str, tuple[float, list[str]]] = {}
+CAPTION_TTL = 10 * 60
+
+
+def caption_lines(category_key: str) -> list[str]:
+    """Every caption for a category, newest read cached briefly."""
+    cat = STACKED_CATEGORIES.get(category_key) or {}
+    folder_id = cat.get("captions_folder")
+    if not folder_id:
+        raise ValueError(f"No Captions folder in '{cat.get('label', category_key)}' on Drive. "
+                         f"Add one with a text file of captions, one per line.")
+
+    hit = _CAPTION_CACHE.get(category_key)
+    if hit and time.time() - hit[0] < CAPTION_TTL:
+        return hit[1]
+
+    files = sorted(list_drive_files(folder_id, ""), key=lambda f: f["name"])
+    if not files:
+        raise ValueError(f"The Captions folder for '{cat.get('label', category_key)}' is empty.")
+
+    lines: list[str] = []
+    for f in files:                       # usually one file; read them all rather than guess
+        try:
+            lines += [ln.strip() for ln in read_drive_text(f["id"]).splitlines()]
+        except Exception as e:
+            print(f"Warning: could not read caption file {f['name']}: {e}")
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        raise ValueError(f"No caption lines found in the Captions folder for "
+                         f"'{cat.get('label', category_key)}'.")
+    _CAPTION_CACHE[category_key] = (time.time(), lines)
+    return lines
+
+
+def random_caption(category_key: str) -> str:
+    return random.choice(caption_lines(category_key))
 
 
 def prefetch_player_images():
@@ -762,6 +817,10 @@ def enqueue_job(category_key: str, player_key: str, vr_on_top: bool, seed_clip: 
             "vr_on_top": vr_on_top,
             "seed": seed_clip,
             "created_at": time.time(),
+            "post_status": None,        # None | posting | posted | partial | error
+            "post_message": None,
+            "post_results": [],
+            "media_token": None,
         }
         JOB_ORDER.append(job_id)
     WORK_QUEUE.put(job_id)
@@ -780,6 +839,146 @@ def queue_snapshot() -> dict:
         "done": sum(1 for j in jobs if j["status"] == "done"),
         "active": running is not None or pending > 0,
     }
+
+
+# ─────────────────────────────────────────────
+# PUBLIC MEDIA
+# Buffer has no upload API: every asset must sit at a public, unauthenticated,
+# stable HTTPS URL, and stay there until the post publishes (days later for a
+# queued post). So a finished render is copied to a public directory and served
+# by an unguessable token from a route that sits outside the login gate.
+#
+# It lives under the state dir because that's the Railway volume — outputs/ is
+# ephemeral and a redeploy would leave Buffer fetching a 404 at publish time.
+PUBLIC_MEDIA_DIR = auth.STATE_DIR / "public_media"
+MEDIA_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+MEDIA_RETENTION_DAYS = int(os.environ.get("MEDIA_RETENTION_DAYS", "30"))
+
+
+def public_base_url(request: Request) -> str:
+    """Origin Buffer should fetch media from."""
+    explicit = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    redirect = os.environ.get("OAUTH_REDIRECT_URI", "").strip()
+    if redirect:
+        parts = urlsplit(redirect)
+        if parts.scheme and parts.netloc:
+            return f"{parts.scheme}://{parts.netloc}"
+    return str(request.base_url).rstrip("/")
+
+
+def sweep_public_media():
+    """Drop published media older than the retention window."""
+    if not PUBLIC_MEDIA_DIR.exists():
+        return
+    cutoff = time.time() - MEDIA_RETENTION_DAYS * 86400
+    for f in PUBLIC_MEDIA_DIR.glob("*.mp4"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+        except OSError:
+            pass
+
+
+def publish_media(job: dict) -> str:
+    """Copy a finished render somewhere Buffer can fetch it. Returns the token."""
+    if job.get("media_token"):
+        existing = PUBLIC_MEDIA_DIR / f"{job['media_token']}.mp4"
+        if existing.exists():
+            return job["media_token"]          # already published, reuse the URL
+
+    src = OUTPUT_DIR / (job.get("file") or "")
+    if not job.get("file") or not src.exists():
+        raise ValueError("The rendered file is no longer on the server — re-render it first.")
+
+    PUBLIC_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_urlsafe(24)
+    dest = PUBLIC_MEDIA_DIR / f"{token}.mp4"
+    tmp = dest.with_suffix(".part")
+    shutil.copyfile(src, tmp)
+    tmp.replace(dest)                          # atomic, so Buffer never sees a partial file
+    job["media_token"] = token
+    sweep_public_media()
+    return token
+
+
+# ─────────────────────────────────────────────
+# POST QUEUE
+# Renders are staged here for review before anything reaches Buffer — the
+# caption, the handles and the video are all resolved at staging time so the
+# Posting tab shows exactly what will be sent.
+#
+# Persisted to the credential store (i.e. the Railway volume) because review
+# happens minutes or hours after the render, possibly across a redeploy.
+POST_QUEUE_SETTING = "post_queue"
+POST_QUEUE: list[dict] = []
+POST_QUEUE_LOCK = threading.RLock()
+
+
+def load_post_queue():
+    global POST_QUEUE
+    try:
+        POST_QUEUE = list(auth.get_setting(POST_QUEUE_SETTING, []) or [])
+    except Exception as e:
+        print(f"Warning: could not read the post queue ({e}); starting empty.")
+        POST_QUEUE = []
+
+
+def persist_post_queue():
+    """Best effort: without SECRET_KEY the queue still works, just in memory."""
+    try:
+        auth.save_setting(POST_QUEUE_SETTING, POST_QUEUE)
+    except Exception as e:
+        print(f"Warning: could not persist the post queue: {e}")
+
+
+def post_queue_snapshot() -> dict:
+    with POST_QUEUE_LOCK:
+        items = [dict(i) for i in POST_QUEUE]
+    return {
+        "posts": items,
+        "pending": sum(1 for i in items if i["status"] == "pending"),
+    }
+
+
+def find_post(post_id: str) -> dict | None:
+    with POST_QUEUE_LOCK:
+        return next((i for i in POST_QUEUE if i["post_id"] == post_id), None)
+
+
+def send_staged_post(item: dict, base: str) -> dict:
+    """Push one staged post to Buffer, one queued post per channel."""
+    token = auth.buffer_token()
+    if not token:
+        raise ValueError("No Buffer API key saved. Add one in Connections.")
+    if not item.get("channels"):
+        raise ValueError(f"No Buffer channels for {item.get('influencer')}.")
+    media = PUBLIC_MEDIA_DIR / f"{item.get('media_token')}.mp4"
+    if not item.get("media_token") or not media.exists():
+        raise ValueError("The video for this post is no longer on the server.")
+
+    video_url = f"{base}{PUBLIC_MEDIA_PREFIX}{item['media_token']}.mp4"
+    results = []
+    for chan in item["channels"]:
+        entry = {"platform": chan.get("service"), "handle": chan.get("name")}
+        try:
+            post = buffer_api.create_video_post(token, chan["id"], item["caption"], video_url)
+            entry.update({"ok": True, "post_id": post.get("id"), "due_at": post.get("dueAt")})
+        except buffer_api.BufferError as e:
+            entry.update({"ok": False, "error": str(e)})
+        results.append(entry)
+
+    ok = [r for r in results if r.get("ok")]
+    failed = [r for r in results if not r.get("ok")]
+    item.update({
+        "results": results,
+        "sent_at": time.time(),
+        "status": "posted" if not failed else ("partial" if ok else "error"),
+        "message": (f"Queued to {len(ok)} of {len(results)} channels" if failed
+                    else f"Queued to {len(ok)} channel{'s' if len(ok) != 1 else ''}"),
+    })
+    return item
 
 
 def zip_influencer_name(jobs: list[dict]) -> str:
@@ -811,6 +1010,7 @@ def delete_output(job: dict):
 async def startup_event():
     """Populate categories from Drive and start the render worker."""
     threading.Thread(target=render_worker, daemon=True).start()
+    load_post_queue()
     try:
         populate_stacked_categories()
         threading.Thread(target=prefetch_player_images, daemon=True).start()
@@ -943,12 +1143,17 @@ async def influencer_inventory(player: str):
 # AUTH — the app is gated because anyone with the URL would otherwise be able to
 # use the credentials the server holds.
 PUBLIC_PATHS = {"/login", "/auth/login", "/auth/callback", "/healthz"}
+PUBLIC_MEDIA_PREFIX = "/m/"
 
 
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
-    if path in PUBLIC_PATHS or not auth.enforcing() or auth.current_user(request):
+    # /m/<token>.mp4 is deliberately outside the gate — Buffer fetches media
+    # anonymously and cannot present a cookie. The token is the only credential,
+    # and it addresses exactly one file.
+    if (path in PUBLIC_PATHS or path.startswith(PUBLIC_MEDIA_PREFIX)
+            or not auth.enforcing() or auth.current_user(request)):
         return await call_next(request)
     # browsers get the sign-in page, fetch() gets a 401 it can act on
     if "text/html" in request.headers.get("accept", ""):
@@ -959,6 +1164,23 @@ async def require_login(request: Request, call_next):
 @app.get("/healthz")
 async def healthz():
     return {"ok": True}
+
+
+@app.get(PUBLIC_MEDIA_PREFIX + "{name}")
+async def public_media(name: str):
+    """Serve one published render to Buffer, unauthenticated.
+
+    The token is a 32-char random string and names a single file; there is no
+    listing, and anything that isn't a clean token is refused before it touches
+    the filesystem.
+    """
+    token = name[:-4] if name.endswith(".mp4") else name
+    if not MEDIA_TOKEN_RE.match(token):
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    path = (PUBLIC_MEDIA_DIR / f"{token}.mp4").resolve()
+    if PUBLIC_MEDIA_DIR.resolve() not in path.parents or not path.exists():
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+    return FileResponse(path, media_type="video/mp4")
 
 
 @app.get("/login")
@@ -1265,6 +1487,139 @@ async def generate_stacked(request: Request):
 
     job_ids = [enqueue_job(category_key, player_key, vr_on_top, seed_clip) for _ in range(count)]
     return {"job_ids": job_ids, "job_id": job_ids[0], "queue": queue_snapshot()}
+
+
+@app.post("/queue/{job_id}/post")
+async def stage_post(job_id: str):
+    """Stage a finished render for review on the Posting tab.
+
+    Nothing reaches Buffer here. The caption, the channels and the public video
+    copy are all resolved now so the review table shows what will actually go
+    out — and so a later CLEAR FINISHED can't pull the file out from under it.
+    """
+    job = job_status.get(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    if job.get("status") != "done":
+        return JSONResponse(status_code=400, content={"error": "That render isn't finished."})
+
+    def fail(msg: str, code: int = 400):
+        job.update({"post_status": "error", "post_message": msg})
+        return JSONResponse(status_code=code, content={
+            "error": msg, "queue": queue_snapshot(), "post_queue": post_queue_snapshot()})
+
+    existing = next((i for i in POST_QUEUE if i.get("job_id") == job_id
+                     and i["status"] == "pending"), None)
+    if existing:
+        job.update({"post_status": "queued", "post_message": "Already in the post queue"})
+        return {"queue": queue_snapshot(), "post_queue": post_queue_snapshot()}
+
+    token = auth.buffer_token()
+    if not token:
+        return fail("No Buffer API key saved. Add one in Connections.")
+
+    try:
+        names = influencer_names()
+        overrides = auth.get_setting(CHANNEL_MAP_SETTING, {}) or {}
+        chans = buffer_api.channels_for_influencer(token, job["player_label"], names, overrides)
+        if not chans:
+            raise ValueError(f"No Buffer channels are assigned to {job['player_label']}. "
+                             f"Check the channel assignments on the Analytics tab.")
+        caption = random_caption(job["category"])
+        media_token = publish_media(job)
+    except (ValueError, buffer_api.BufferError) as e:
+        return fail(str(e))
+    except Exception as e:
+        return fail(str(e), 500)
+
+    item = {
+        "post_id": str(uuid.uuid4())[:8],
+        "job_id": job_id,
+        "video_name": job.get("download_name") or job.get("file"),
+        "media_token": media_token,
+        "influencer": job["player_label"],
+        "category": job["category"],
+        "category_label": job["category_label"],
+        "caption": caption,
+        "channels": [{"id": c["id"], "service": c.get("service"), "name": c.get("name")}
+                     for c in chans],
+        "status": "pending",
+        "message": None,
+        "results": [],
+        "created_at": time.time(),
+    }
+    with POST_QUEUE_LOCK:
+        POST_QUEUE.append(item)
+        persist_post_queue()
+    job.update({"post_status": "queued", "post_message": "In the post queue"})
+    return {"queue": queue_snapshot(), "post_queue": post_queue_snapshot()}
+
+
+@app.get("/posts")
+async def get_posts():
+    return post_queue_snapshot()
+
+
+@app.post("/posts/{post_id}/send")
+async def send_post(post_id: str, request: Request):
+    item = find_post(post_id)
+    if not item:
+        return JSONResponse(status_code=404, content={"error": "Post not found"})
+    if item["status"] in ("posted", "posting"):
+        return JSONResponse(status_code=409, content={"error": "That post has already gone out."})
+
+    base = public_base_url(request)
+    if not base.startswith("https://"):
+        msg = (f"Buffer needs a public HTTPS URL for the video, but this server is reachable "
+               f"at {base}. Posting works from the deployed app.")
+        item.update({"status": "error", "message": msg})
+        return JSONResponse(status_code=400, content={"error": msg,
+                                                      "post_queue": post_queue_snapshot()})
+    try:
+        send_staged_post(item, base)
+    except (ValueError, buffer_api.BufferError) as e:
+        item.update({"status": "error", "message": str(e)})
+        return JSONResponse(status_code=400, content={"error": str(e),
+                                                      "post_queue": post_queue_snapshot()})
+    finally:
+        with POST_QUEUE_LOCK:
+            persist_post_queue()
+    return post_queue_snapshot()
+
+
+@app.post("/posts/send-all")
+async def send_all_posts(request: Request):
+    """Send every pending post. One failure doesn't stop the rest."""
+    base = public_base_url(request)
+    if not base.startswith("https://"):
+        return JSONResponse(status_code=400, content={
+            "error": f"Buffer needs a public HTTPS URL for the video, but this server is "
+                     f"reachable at {base}. Posting works from the deployed app.",
+            "post_queue": post_queue_snapshot()})
+
+    with POST_QUEUE_LOCK:
+        pending = [i for i in POST_QUEUE if i["status"] in ("pending", "error", "partial")]
+    for item in pending:
+        try:
+            send_staged_post(item, base)
+        except (ValueError, buffer_api.BufferError) as e:
+            item.update({"status": "error", "message": str(e)})
+    with POST_QUEUE_LOCK:
+        persist_post_queue()
+    return post_queue_snapshot()
+
+
+@app.delete("/posts/{post_id}")
+async def remove_post(post_id: str):
+    global POST_QUEUE
+    with POST_QUEUE_LOCK:
+        item = next((i for i in POST_QUEUE if i["post_id"] == post_id), None)
+        POST_QUEUE = [i for i in POST_QUEUE if i["post_id"] != post_id]
+        persist_post_queue()
+    # let the render item offer Post again
+    if item and (job := job_status.get(item.get("job_id"))) and job.get("post_status") == "queued":
+        job.update({"post_status": None, "post_message": None})
+    return post_queue_snapshot()
 
 
 @app.get("/queue")
