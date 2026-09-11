@@ -371,6 +371,10 @@
   .pt-vid { color: var(--green); text-decoration: none; }
   .pt-vid:hover { text-decoration: underline; }
   .pt-missing { color: #cc3333; }
+  .pt-yt {
+    font-size: 12px; line-height: 1.45; color: var(--accent2);
+    margin-top: 5px;
+  }
   .pt-action { width: 120px; white-space: nowrap; text-align: right; }
   .pt-action .q-x { margin-left: 6px; vertical-align: middle; }
   .q-track {
@@ -1268,7 +1272,10 @@
           '</div>' +
         '</td>' +
         '<td class="pt-to">' + handles + '</td>' +
-        '<td class="pt-caption"><div class="pt-caption-text">' + esc(p.caption || '') + '</div>' + note + '</td>' +
+        '<td class="pt-caption"><div class="pt-caption-text">' + esc(p.caption || '') + '</div>' +
+          (p.youtube_title && p.youtube_title !== p.caption
+            ? '<div class="pt-yt">YouTube title (trimmed to 100): ' + esc(p.youtube_title) + '</div>'
+            : '') + note + '</td>' +
         '<td class="pt-action">' + action +
           '<button class="q-x" title="Remove from queue" onclick="removePost(\'' + p.post_id + '\')">✕</button>' +
         '</td>' +

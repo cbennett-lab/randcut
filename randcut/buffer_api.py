@@ -621,10 +621,14 @@ def create_video_post(token: str, channel_id: str, text: str, video_url: str,
     """
     meta = _platform_metadata(service, text)
     meta_block = f",\n        metadata: {{ {meta} }}" if meta else ""
+    # On YouTube `text` is the *description*, and the caption is already going in
+    # as the title — sending both puts it on the video twice. text is optional
+    # (String, not String!), so an empty one leaves the description blank.
+    body = "" if (service or "").lower() == "youtube" else text
     query = f"""
     mutation RandcutCreatePost {{
       createPost(input: {{
-        text: {_gql_string(text)},
+        text: {_gql_string(body)},
         channelId: "{_literal_id(channel_id)}",
         schedulingType: automatic,
         mode: addToQueue,

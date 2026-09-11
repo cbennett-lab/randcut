@@ -1650,6 +1650,11 @@ def stage_post(job_id: str):
         "category": job["category"],
         "category_label": job["category_label"],
         "caption": caption,
+        # YouTube takes the caption as its title and gets no description, so the
+        # title is what actually publishes there — show it at review time
+        "youtube_title": (buffer_api.youtube_title(caption)
+                          if any((c.get("service") or "").lower() == "youtube" for c in chans)
+                          else None),
         "channels": [{"id": c["id"], "service": c.get("service"), "name": c.get("name")}
                      for c in chans],
         "status": "pending",
