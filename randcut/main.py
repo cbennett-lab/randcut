@@ -300,8 +300,13 @@ _CAPTION_CACHE: dict[str, tuple[float, list[str]]] = {}
 CAPTION_TTL = 10 * 60
 
 
-def caption_lines(category_key: str) -> list[str]:
-    """Every caption for a category, newest read cached briefly."""
+def caption_lines(category_key: str) -> list[dict]:
+    """Every caption for a category, each tagged with the file it came from.
+
+    Read strictly from *this* category's own Captions folder — a combo like
+    "My Best Layups and Blocks in VR" takes clips from other categories but its
+    captions are its own, never inherited from a source.
+    """
     cat = STACKED_CATEGORIES.get(category_key) or {}
     folder_id = cat.get("captions_folder")
     if not folder_id:
@@ -312,25 +317,38 @@ def caption_lines(category_key: str) -> list[str]:
     if hit and time.time() - hit[0] < CAPTION_TTL:
         return hit[1]
 
-    files = sorted(list_drive_files(folder_id, ""), key=lambda f: f["name"])
+    files = sorted(list_drive_files(folder_id, "text/"), key=lambda f: f["name"])
     if not files:
-        raise ValueError(f"The Captions folder for '{cat.get('label', category_key)}' is empty.")
+        raise ValueError(f"No text files in the Captions folder for "
+                         f"'{cat.get('label', category_key)}'.")
 
-    lines: list[str] = []
-    for f in files:                       # usually one file; read them all rather than guess
+    pool: list[dict] = []
+    for f in files:                       # every text file in the folder contributes
         try:
-            lines += [ln.strip() for ln in read_drive_text(f["id"]).splitlines()]
+            for line in read_drive_text(f["id"]).splitlines():
+                line = line.strip()
+                if line:
+                    pool.append({"text": line, "file": f["name"]})
         except Exception as e:
             print(f"Warning: could not read caption file {f['name']}: {e}")
-    lines = [ln for ln in lines if ln]
-    if not lines:
+    if not pool:
         raise ValueError(f"No caption lines found in the Captions folder for "
                          f"'{cat.get('label', category_key)}'.")
-    _CAPTION_CACHE[category_key] = (time.time(), lines)
-    return lines
+    _CAPTION_CACHE[category_key] = (time.time(), pool)
+    return pool
 
 
-def random_caption(category_key: str) -> str:
+def caption_sources(category_key: str) -> list[str]:
+    """Which files a category's captions came from — shown at review time so a
+    stray file in the folder is visible rather than mysterious."""
+    try:
+        return sorted({c["file"] for c in caption_lines(category_key)})
+    except Exception:
+        return []
+
+
+def random_caption(category_key: str) -> dict:
+    """One caption, with the file it came from."""
     return random.choice(caption_lines(category_key))
 
 
@@ -1766,7 +1784,8 @@ def stage_post(job_id: str):
         if not chans:
             raise ValueError(f"No Buffer channels are assigned to {job['player_label']}. "
                              f"Check the channel assignments on the Analytics tab.")
-        caption = random_caption(job["category"])
+        picked = random_caption(job["category"])
+        caption, caption_file = picked["text"], picked["file"]
         media_token = publish_media(job)
     except (ValueError, buffer_api.BufferError) as e:
         return fail(str(e))
@@ -1782,6 +1801,9 @@ def stage_post(job_id: str):
         "category": job["category"],
         "category_label": job["category_label"],
         "caption": caption,
+        # which file in which category's Captions folder this line came from
+        "caption_file": caption_file,
+        "caption_sources": caption_sources(job["category"]),
         # YouTube takes the caption as its title and gets no description, so the
         # title is what actually publishes there — show it at review time
         "youtube_title": (buffer_api.youtube_title(caption)
