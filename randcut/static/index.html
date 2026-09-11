@@ -329,7 +329,13 @@
   .q-post.done { color: var(--green); border-color: rgba(42,122,74,0.45); background: rgba(42,122,74,0.06); }
   .q-post.partial { color: var(--accent2); border-color: var(--accent2); }
   .q-post.failed { color: #cc3333; border-color: #cc3333; }
-  .q-post.queued { color: var(--green); border-color: rgba(42,122,74,0.45); }
+  /* yellow: handed to the post queue, not yet sent to Buffer */
+  .q-post.queued { color: #9a7b16; border-color: rgba(200,168,75,0.75); background: rgba(200,168,75,0.12); }
+  .q-post.partial { color: var(--accent2); border-color: var(--accent2); }
+  .rail-link.accent { color: var(--dark); }
+  .rail-link.accent:disabled { color: var(--muted); opacity: 0.5; }
+  .an-head-actions { display: flex; align-items: center; gap: 14px; }
+  .conn-link:disabled { opacity: 0.4; cursor: not-allowed; }
 
   /* ─── POSTING TAB ─── */
   .nav-badge {
@@ -900,9 +906,14 @@
             <div class="page-title">POSTING</div>
             <div class="page-sub">Review what goes to Buffer, then send it.</div>
           </div>
-          <button class="btn btn-secondary btn-sm" id="postAllBtn" onclick="sendAllPosts()">
-            Post All
-          </button>
+          <div class="an-head-actions">
+            <button class="btn btn-secondary btn-sm" id="postAllBtn" onclick="sendAllPosts()">
+              Post All
+            </button>
+            <button class="conn-link danger" id="clearPostsBtn" onclick="clearPosts()">
+              Clear All
+            </button>
+          </div>
         </div>
 
         <div class="cat-loading" id="postLoading">
@@ -1001,6 +1012,7 @@
     <div class="rail-head">
       <div class="rail-head-top">
         <div class="rail-title">Queue</div>
+        <button class="rail-link accent" id="postAllRailBtn" onclick="stageAll()" disabled>Post All</button>
         <button class="rail-link" id="dlAllBtn" onclick="downloadAll()" disabled>Download All</button>
       </div>
       <div class="rail-count" id="railCount"></div>
@@ -1217,6 +1229,7 @@
     document.getElementById('postAllBtn').disabled = sendable.length === 0;
     document.getElementById('postAllBtn').textContent =
       sendable.length > 1 ? 'Post All (' + sendable.length + ')' : 'Post All';
+    document.getElementById('clearPostsBtn').disabled = posts.length === 0;
 
     if (!posts.length) {
       document.getElementById('postResult').innerHTML =
@@ -1308,10 +1321,15 @@
   const sendPost = id => postAction('/posts/' + id + '/send', 'POST');
   const removePost = id => postAction('/posts/' + id, 'DELETE');
 
+  async function clearPosts() {
+    const n = (postData.posts || []).length;
+    if (!n) return;
+    await postAction('/posts/clear', 'POST');
+  }
+
   function sendAllPosts() {
     const n = (postData.posts || []).filter(p => p.status !== 'posted' && p.status !== 'posting').length;
     if (!n) return;
-    if (!confirm('Send ' + n + ' post' + (n === 1 ? '' : 's') + ' to Buffer?')) return;
     postAction('/posts/send-all', 'POST');
   }
 
@@ -2208,14 +2226,42 @@
 
     if (st === 'staging')
       return '<button class="q-post working"' + attrs + ' disabled>Queueing…</button>';
+    /* yellow: in the post queue but not yet sent to Buffer */
     if (st === 'queued')
       return '<button class="q-post queued" title="In the post queue — review it on the ' +
              'Posting tab" onclick="showTab(\'posting\')">✓ Queued</button>';
+    /* green: actually queued at Buffer */
+    if (st === 'posted')
+      return '<button class="q-post done"' + attrs +
+             ' onclick="showTab(\'posting\')">✓ Posted</button>';
+    if (st === 'partial')
+      return '<button class="q-post partial"' + attrs +
+             ' onclick="showTab(\'posting\')">⚠ Partial</button>';
     if (st === 'error')
-      return '<button class="q-post failed"' + attrs +
-             ' onclick="postJob(\'' + j.job_id + '\')">Retry</button>';
+      return '<button class="q-post failed"' + attrs + ' onclick="' +
+             (j.post_id ? 'showTab(\'posting\')' : 'postJob(\'' + j.job_id + '\')') +
+             '">Retry</button>';
     return '<button class="q-post" title="Add to the post queue for review" onclick="postJob(\'' +
            j.job_id + '\')">Post</button>';
+  }
+
+  async function stageAll() {
+    const n = (lastQueue.jobs || []).filter(j => j.status === 'done' && !j.post_id).length;
+    if (!n) return;
+    const btn = document.getElementById('postAllRailBtn');
+    btn.disabled = true;
+    btn.textContent = 'Queueing…';
+    try {
+      const data = await fetch('/queue/post-all', { method: 'POST' }).then(r => r.json());
+      if (data.queue) renderQueue(data.queue);
+      if (data.post_queue) { postData = data.post_queue; renderPosts(); }
+      if (data.error) showError(data.error);
+    } catch (e) {
+      showError('Error: ' + e.message);
+      pollQueue();
+    } finally {
+      btn.textContent = 'Post All';
+    }
   }
 
   async function postJob(id) {
@@ -2291,6 +2337,11 @@
       '</div>';
     }).join('');
 
+    const stageable = jobs.filter(j => j.status === 'done' && !j.post_id).length;
+    const postAll = document.getElementById('postAllRailBtn');
+    postAll.disabled = stageable === 0;
+    postAll.textContent = stageable > 1 ? 'Post All (' + stageable + ')' : 'Post All';
+
     const dlAll = document.getElementById('dlAllBtn');
     dlAll.disabled = done === 0;
     dlAll.textContent = done > 1 ? 'Download All (' + done + ')' : 'Download All';
@@ -2304,6 +2355,7 @@
       const state = await fetch(url, { method: 'POST' }).then(r => r.json());
       if (state.error) { showError(state.error); return; }
       renderQueue(state);
+      if (state.post_queue) { postData = state.post_queue; renderPosts(); }
       if (state.active) startPolling();
     } catch (e) {
       showError('Error: ' + e.message);
@@ -2312,14 +2364,13 @@
 
   const cancelJob = id => postQueue('/queue/' + id + '/cancel');
   const removeJob = id => postQueue('/queue/' + id + '/remove');
+  /* postQueue() below also picks up post_queue when the response carries it */
 
   function stopAll() {
-    if (!confirm('Stop the current render and drop everything still waiting?')) return;
     postQueue('/queue/stop');
   }
 
   function clearFinished() {
-    if (!confirm('Clear finished renders from the list? Their files are deleted from the server.')) return;
     postQueue('/queue/clear');
   }
 

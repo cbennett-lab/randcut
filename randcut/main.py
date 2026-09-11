@@ -821,6 +821,7 @@ def enqueue_job(category_key: str, player_key: str, vr_on_top: bool, seed_clip: 
             "post_status": None,        # None | posting | posted | partial | error
             "post_message": None,
             "post_results": [],
+            "post_id": None,
             "media_token": None,
         }
         JOB_ORDER.append(job_id)
@@ -1075,7 +1076,17 @@ def send_staged_post(item: dict, base: str) -> dict:
         "message": (f"Queued to {len(ok)} of {len(results)} channels" if failed
                     else f"Queued to {len(ok)} channel{'s' if len(ok) != 1 else ''}"),
     })
+    mirror_post_status(item)
     return item
+
+
+def mirror_post_status(item: dict):
+    """Reflect a staged post's fate on its render-queue item, so the rail shows
+    queued (yellow) vs posted (green) without the UI having to join the two."""
+    job = job_status.get(item.get("job_id"))
+    if job:
+        job.update({"post_status": item["status"], "post_message": item.get("message"),
+                    "post_id": item.get("post_id")})
 
 
 def zip_influencer_name(jobs: list[dict]) -> str:
@@ -1620,7 +1631,8 @@ def stage_post(job_id: str):
     existing = next((i for i in POST_QUEUE if i.get("job_id") == job_id
                      and i["status"] == "pending"), None)
     if existing:
-        job.update({"post_status": "queued", "post_message": "Already in the post queue"})
+        job.update({"post_status": "queued", "post_message": "Already in the post queue",
+                    "post_id": existing["post_id"]})
         return {"queue": queue_snapshot(), "post_queue": post_queue_snapshot()}
 
     token = auth.buffer_token()
@@ -1665,8 +1677,47 @@ def stage_post(job_id: str):
     with POST_QUEUE_LOCK:
         POST_QUEUE.append(item)
         persist_post_queue()
-    job.update({"post_status": "queued", "post_message": "In the post queue"})
+    job.update({"post_status": "queued", "post_message": "In the post queue",
+                "post_id": item["post_id"]})
     return {"queue": queue_snapshot(), "post_queue": post_queue_snapshot()}
+
+
+@app.post("/queue/post-all")
+def stage_all_posts():
+    """Send every finished, not-yet-queued render to the post queue."""
+    with QUEUE_LOCK:
+        candidates = [j for j in (job_status.get(i) for i in JOB_ORDER)
+                      if j and j["status"] == "done" and not j.get("post_id")]
+    staged, failed = 0, []
+    for job in candidates:
+        result = stage_post(job["job_id"])
+        if isinstance(result, JSONResponse):
+            failed.append(job.get("download_name") or job["job_id"])
+        else:
+            staged += 1
+    out = {"queue": queue_snapshot(), "post_queue": post_queue_snapshot(), "staged": staged}
+    if failed:
+        out["error"] = (f"Queued {staged}; couldn't queue {len(failed)}: "
+                        + ", ".join(failed[:3]) + ("…" if len(failed) > 3 else ""))
+    return out
+
+
+@app.post("/posts/clear")
+def clear_post_queue():
+    """Wipe the post queue regardless of status.
+
+    Published media is left alone — Buffer fetches it when a queued post actually
+    goes out, which can be days later. Retention sweeps it instead.
+    """
+    global POST_QUEUE
+    with POST_QUEUE_LOCK:
+        for item in POST_QUEUE:
+            job = job_status.get(item.get("job_id"))
+            if job:
+                job.update({"post_status": None, "post_message": None, "post_id": None})
+        POST_QUEUE = []
+        persist_post_queue()
+    return {"post_queue": post_queue_snapshot(), "queue": queue_snapshot()}
 
 
 @app.get("/posts")
@@ -1716,12 +1767,14 @@ def send_post(post_id: str, request: Request):
         msg = (f"Buffer needs a public HTTPS URL for the video, but this server is reachable "
                f"at {base}. Posting works from the deployed app.")
         item.update({"status": "error", "message": msg})
+        mirror_post_status(item)
         return JSONResponse(status_code=400, content={"error": msg,
                                                       "post_queue": post_queue_snapshot()})
     try:
         send_staged_post(item, base)
     except (ValueError, buffer_api.BufferError) as e:
         item.update({"status": "error", "message": str(e)})
+        mirror_post_status(item)
         return JSONResponse(status_code=400, content={"error": str(e),
                                                       "post_queue": post_queue_snapshot()})
     finally:
@@ -1747,6 +1800,7 @@ def send_all_posts(request: Request):
             send_staged_post(item, base)
         except (ValueError, buffer_api.BufferError) as e:
             item.update({"status": "error", "message": str(e)})
+            mirror_post_status(item)
     with POST_QUEUE_LOCK:
         persist_post_queue()
     return post_queue_snapshot()
@@ -1760,8 +1814,8 @@ async def remove_post(post_id: str):
         POST_QUEUE = [i for i in POST_QUEUE if i["post_id"] != post_id]
         persist_post_queue()
     # let the render item offer Post again
-    if item and (job := job_status.get(item.get("job_id"))) and job.get("post_status") == "queued":
-        job.update({"post_status": None, "post_message": None})
+    if item and (job := job_status.get(item.get("job_id"))):
+        job.update({"post_status": None, "post_message": None, "post_id": None})
     return post_queue_snapshot()
 
 
@@ -1811,8 +1865,13 @@ async def stop_queue():
 
 
 @app.post("/queue/{job_id}/remove")
-async def remove_job(job_id: str):
-    """Drop a finished job from the list and delete its file."""
+def remove_job(job_id: str):
+    """Drop a finished job from the list and delete its file.
+
+    Its staged post goes too — the video it would publish is being deleted here,
+    so leaving the row behind would only fail later.
+    """
+    global POST_QUEUE
     with QUEUE_LOCK:
         job = job_status.get(job_id)
         if not job:
@@ -1824,22 +1883,47 @@ async def remove_job(job_id: str):
         CANCELLED.discard(job_id)
         if job_id in JOB_ORDER:
             JOB_ORDER.remove(job_id)
-    return queue_snapshot()
+
+    with POST_QUEUE_LOCK:
+        if any(i.get("job_id") == job_id for i in POST_QUEUE):
+            POST_QUEUE = [i for i in POST_QUEUE if i.get("job_id") != job_id]
+            persist_post_queue()
+    return {**queue_snapshot(), "post_queue": post_queue_snapshot()}
+
+
+def job_is_clearable(job: dict) -> bool:
+    """A render can be cleared once it can't be posted or already has been.
+
+    A finished render that is still waiting to be posted — or sitting in the post
+    queue unsent — is kept, since clearing it deletes the file it would post.
+    """
+    status = job.get("status")
+    if status in ("error", "cancelled"):
+        return True                       # never postable
+    if status != "done":
+        return False                      # still rendering or queued
+    return job.get("post_status") == "posted"
 
 
 @app.post("/queue/clear")
-async def clear_queue():
-    """Clear every finished/stopped entry and its file. Anything still rendering stays."""
+def clear_queue():
+    """Clear finished entries that are done with. Anything still postable stays."""
     with QUEUE_LOCK:
         for job_id in list(JOB_ORDER):
             job = job_status.get(job_id)
-            if not job or job["status"] not in ("done", "error", "cancelled"):
+            if not job or not job_is_clearable(job):
                 continue
             delete_output(job)
             job_status.pop(job_id, None)
             CANCELLED.discard(job_id)
             JOB_ORDER.remove(job_id)
-    return queue_snapshot()
+
+    # and drop the matching sent posts from the post queue
+    global POST_QUEUE
+    with POST_QUEUE_LOCK:
+        POST_QUEUE = [i for i in POST_QUEUE if i["status"] != "posted"]
+        persist_post_queue()
+    return {**queue_snapshot(), "post_queue": post_queue_snapshot()}
 
 
 @app.get("/status/{job_id}")
