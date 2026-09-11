@@ -972,9 +972,15 @@ def persist_post_queue():
         print(f"Warning: could not persist the post queue: {e}")
 
 
-def post_queue_snapshot() -> dict:
+def post_queue_snapshot(base: str = "") -> dict:
     with POST_QUEUE_LOCK:
         items = [dict(i) for i in POST_QUEUE]
+    for i in items:
+        # the exact URL handed to Buffer, so it can be opened and checked
+        i["media_url"] = (f"{base}{PUBLIC_MEDIA_PREFIX}{i['media_token']}.mp4"
+                          if base and i.get("media_token") else None)
+        i["media_on_disk"] = bool(i.get("media_token")) and \
+            (PUBLIC_MEDIA_DIR / f"{i['media_token']}.mp4").exists()
     return {
         "posts": items,
         "pending": sum(1 for i in items if i["status"] == "pending"),
@@ -1024,6 +1030,10 @@ def send_staged_post(item: dict, base: str) -> dict:
         raise ValueError("The video for this post is no longer on the server.")
 
     video_url = f"{base}{PUBLIC_MEDIA_PREFIX}{item['media_token']}.mp4"
+    media_path = PUBLIC_MEDIA_DIR / f"{item['media_token']}.mp4"
+    print(f"Posting {item.get('video_name')}: url={video_url} "
+          f"on_disk={media_path.exists()} "
+          f"size={media_path.stat().st_size if media_path.exists() else 0}")
 
     # Buffer fetches this URL itself, anonymously, from the public internet. If
     # it can't, every channel fails identically and the real reason is buried in
@@ -1641,8 +1651,8 @@ def stage_post(job_id: str):
 
 
 @app.get("/posts")
-async def get_posts():
-    return post_queue_snapshot()
+def get_posts(request: Request):
+    return post_queue_snapshot(public_base_url(request))
 
 
 @app.get("/posts/media-check")

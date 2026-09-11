@@ -368,6 +368,9 @@
     margin-top: 5px; word-break: break-word;
   }
   .pt-error strong { font-weight: 600; }
+  .pt-vid { color: var(--green); text-decoration: none; }
+  .pt-vid:hover { text-decoration: underline; }
+  .pt-missing { color: #cc3333; }
   .pt-action { width: 120px; white-space: nowrap; text-align: right; }
   .pt-action .q-x { margin-left: 6px; vertical-align: middle; }
   .q-track {
@@ -1255,7 +1258,14 @@
 
       return '<tr>' +
         '<td><span class="fm-file">' + esc(p.video_name || '—') + '</span>' +
-          '<div class="pt-sub">' + esc(p.influencer || '') + ' · ' + esc(p.category_label || '') + '</div>' +
+          '<div class="pt-sub">' + esc(p.influencer || '') + ' · ' + esc(p.category_label || '') +
+            (p.media_url
+              ? ' · <a class="pt-vid" href="' + esc(p.media_url) + '" target="_blank" ' +
+                'rel="noopener" title="The exact URL Buffer is given">video ↗</a>'
+              : '') +
+            (p.media_on_disk === false
+              ? ' · <span class="pt-missing">video missing</span>' : '') +
+          '</div>' +
         '</td>' +
         '<td class="pt-to">' + handles + '</td>' +
         '<td class="pt-caption"><div class="pt-caption-text">' + esc(p.caption || '') + '</div>' + note + '</td>' +
