@@ -366,6 +366,153 @@
   }
   .placeholder-msg { font-size: 13px; color: var(--muted); }
 
+  /* ─── ANALYTICS ─── */
+  .an-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 24px; flex-wrap: wrap;
+  }
+  /* two headline numbers, equally weighted */
+  .an-stats {
+    display: flex; align-items: flex-end; gap: 44px; flex-wrap: wrap;
+    margin: 4px 0 22px;
+  }
+  .an-stat-num {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 54px; line-height: 0.88; letter-spacing: 1px; color: var(--dark);
+  }
+  .an-stat-lbl {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 3px;
+    text-transform: uppercase; color: var(--muted); margin-top: 6px;
+  }
+  .an-stat-meta { padding-bottom: 4px; }
+  .an-scope {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 15px; font-weight: 600; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--dark);
+  }
+  .an-scope-sub {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); margin-top: 3px;
+  }
+
+  .an-range {
+    display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;
+    padding-bottom: 18px; margin-bottom: 20px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .an-range .an-control { width: 150px; }
+  /* needs to out-specify the rule above, or the nav gets clipped */
+  .an-range .an-nav-control { width: auto; flex: 0 0 auto; }
+  .an-nav {
+    display: flex; align-items: stretch;
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    background: var(--card);
+  }
+  .an-arrow-btn {
+    width: 38px; background: var(--card); border: none; cursor: pointer;
+    font-size: 20px; line-height: 1; color: var(--dark);
+    transition: background 0.15s, color 0.15s;
+  }
+  .an-arrow-btn:hover:not(:disabled) { background: var(--bg); }
+  .an-arrow-btn:disabled { color: var(--border); cursor: not-allowed; }
+  .an-nav-label {
+    display: flex; align-items: center; justify-content: center;
+    min-width: 148px; padding: 11px 14px;
+    border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 15px; font-weight: 600; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--muted); white-space: nowrap;
+  }
+  .an-nav-label.past { color: var(--dark); }
+  .an-current-btn { margin-bottom: 1px; }
+  .an-export {
+    display: flex; align-items: center; gap: 12px;
+    margin-left: auto; padding-bottom: 1px;
+  }
+  .an-export .conn-link { padding-bottom: 2px; }
+
+  .an-controls {
+    display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .an-control { width: 210px; max-width: 100%; }
+  .an-control .field-label { margin-bottom: 6px; }
+  .an-control select { padding: 11px 38px 11px 13px; font-size: 15px; }
+  .an-control .select-wrap::after { right: 15px; }
+  .an-controls .conn-link { padding-bottom: 13px; }
+
+  .an-stamps {
+    display: flex; gap: 32px; flex-wrap: wrap;
+    padding: 12px 0 16px; border-top: 1px solid var(--border-soft);
+  }
+  .an-stamp-lbl {
+    display: block;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 10px; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 2px;
+  }
+  .an-stamp-val { font-size: 14px; color: var(--text); }
+  .an-ago { color: var(--muted); }
+
+  /* sortable headers */
+  th.an-th { cursor: pointer; user-select: none; transition: color 0.15s; }
+  th.an-th:hover { color: var(--dark); }
+  th.an-th.active { color: var(--dark); }
+  th.an-th:focus-visible { outline: 2px solid var(--dark); outline-offset: -2px; }
+  .an-arrow { display: inline-block; width: 10px; margin-left: 5px; }
+
+  .an-open {
+    display: inline-block; text-decoration: none;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 12px; background: var(--bg); color: var(--dark);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .an-open:hover { border-color: var(--dark); background: var(--card); }
+
+  .an-date, .an-platform { white-space: nowrap; }
+  .an-platform {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px; font-weight: 600; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .an-views {
+    font-family: 'Bebas Neue', sans-serif; font-size: 19px;
+    letter-spacing: 0.5px; text-align: right; white-space: nowrap;
+    width: 96px;
+  }
+  .an-url { width: 96px; }
+  .an-text {
+    display: block; font-size: 13px; max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--muted); font-style: italic;
+  }
+  .an-unknown { color: var(--accent2); }
+  .an-assign {
+    margin-top: 28px; padding-top: 22px;
+    border-top: 1px solid var(--border-soft); max-width: 620px;
+  }
+  /* .sub-label is width-capped for the Advanced rows; not here */
+  .an-assign .sub-label { width: auto; margin-bottom: 6px; }
+  .an-assign .conn-detail { margin-bottom: 14px; }
+  .an-assign-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; padding: 9px 0;
+  }
+  .an-assign-chan { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .an-assign-select { flex: 0 0 200px; }
+  .an-assign-select select { padding: 9px 36px 9px 12px; font-size: 14px; }
+  .an-assign-select::after { right: 14px; }
+
+  .an-cached {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); margin-top: 10px;
+  }
+
   /* ─── CONNECTIONS ─── */
   .conn-card {
     display: flex; align-items: flex-start; justify-content: space-between;
@@ -679,11 +826,25 @@
 
     <section class="tab-panel" id="tab-analytics">
       <div class="panel wide">
-        <div class="page-title">ANALYTICS</div>
-        <div class="page-sub">How the clips are performing once they're out in the wild.</div>
-        <div class="placeholder">
-          <div class="placeholder-title">NOTHING HERE YET</div>
-          <div class="placeholder-msg">Performance reporting lands in this frame.</div>
+        <div class="an-head">
+          <div>
+            <div class="page-title">ANALYTICS</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="anRefresh" onclick="loadAnalytics(true)">
+            ⟳ Sync Now
+          </button>
+        </div>
+
+        <div class="cat-loading" id="anLoading">
+          <div class="cat-loading-track"><div class="cat-loading-bar"></div></div>
+          <div class="cat-loading-label">Reading Buffer…</div>
+        </div>
+
+        <div id="anResult">
+          <div class="placeholder">
+            <div class="placeholder-title">NOT LOADED</div>
+            <div class="placeholder-msg">Loading the last sync…</div>
+          </div>
         </div>
       </div>
     </section>
@@ -787,6 +948,9 @@
     if (updateHash && location.hash.slice(1) !== name) {
       history.replaceState(null, '', '#' + name);
     }
+    /* Buffer allows only a few thousand requests a month, so pull on first
+       open rather than on every page load. */
+    if (name === 'analytics' && !anLoaded) loadAnalytics(false);
   }
 
   document.querySelectorAll('.nav-item').forEach(btn => {
@@ -909,6 +1073,471 @@
       ? 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across ' + inf.display + "'s " +
         inf.cats.length + (inf.cats.length === 1 ? ' video type.' : ' video types.')
       : 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across every video type the influencer has.';
+  }
+
+  /* ─── ANALYTICS ───────────────────────────────────────── */
+  let anLoaded = false;
+  let anData = null;                                  // last synced payload
+  let anFilter = { influencer: '', platform: '' };
+  let anSort = { key: 'date', dir: 'desc' };
+  let anRange = { kind: 'month', offset: 0 };         // default: this month
+
+  const PLATFORM_LABELS = {
+    tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube',
+    facebook: 'Facebook', twitter: 'X', linkedin: 'LinkedIn',
+  };
+  const platformLabel = s => PLATFORM_LABELS[(s || '').toLowerCase()] || (s || '—');
+
+  const nf = new Intl.NumberFormat();
+  const TZ = 'America/Chicago';
+
+  /* "September 10, 2:23PM CDT" — Chicago, however the viewer's clock is set */
+  function fmtChicago(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    const day = new Intl.DateTimeFormat('en-US',
+      { timeZone: TZ, month: 'long', day: 'numeric' }).format(d);
+    const time = new Intl.DateTimeFormat('en-US',
+      { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(d).replace(/\s/g, '');
+    const zone = new Intl.DateTimeFormat('en-US', { timeZone: TZ, timeZoneName: 'short' })
+      .formatToParts(d).find(p => p.type === 'timeZoneName').value;
+    return day + ', ' + time + ' ' + zone;
+  }
+
+  function fmtAgo(iso) {
+    const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+    if (!isFinite(mins)) return '';
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.round(mins / 60);
+    if (hrs < 48) return hrs + 'h ago';
+    return Math.round(hrs / 24) + 'd ago';
+  }
+
+  function stamp(label, iso) {
+    if (!iso) return '';
+    const when = fmtChicago(iso);
+    if (!when) return '';
+    return '<div class="an-stamp">' +
+      '<span class="an-stamp-lbl">' + esc(label) + '</span>' +
+      '<span class="an-stamp-val">' + esc(when) + ' <span class="an-ago">(' +
+        esc(fmtAgo(iso)) + ')</span></span>' +
+    '</div>';
+  }
+
+  function anPlaceholder(title, msg) {
+    document.getElementById('anResult').innerHTML =
+      '<div class="placeholder"><div class="placeholder-title">' + esc(title) + '</div>' +
+      '<div class="placeholder-msg">' + esc(msg) + '</div></div>';
+  }
+
+  /* mode 'cached'  — tab open: render the last sync, never call Buffer
+     mode 'load'    — period change: use the cache if warm, else fetch
+     mode 'force'   — Sync Now: always re-read */
+  async function loadAnalytics(mode) {
+    if (mode === true) mode = 'force';
+    if (!mode) mode = 'cached';
+    const loader = document.getElementById('anLoading');
+    const btn = document.getElementById('anRefresh');
+    loader.classList.add('visible');
+    btn.disabled = true;
+    const params = new URLSearchParams({ range: anRange.kind, offset: String(anRange.offset) });
+    if (mode === 'cached') params.set('cached_only', 'true');
+    if (mode === 'force') params.set('force', 'true');
+    try {
+      const data = await fetch('/analytics/posts?' + params).then(r => r.json());
+      anLoaded = true;
+      if (data.error) {
+        anData = null;
+        renderAnalyticsShell(data.period, 'Buffer unavailable', data.error);
+        return;
+      }
+      if (data.synced === false) {
+        anData = null;
+        renderAnalyticsShell(data.period, 'Not synced',
+          'Hit Sync Now to read ' + (data.period ? data.period.label : 'this period') +
+          ' from Buffer.');
+        return;
+      }
+      renderAnalytics(data);
+    } catch (e) {
+      anData = null;
+      renderAnalyticsShell(null, 'Buffer unavailable', e.message);
+    } finally {
+      loader.classList.remove('visible');
+      btn.disabled = false;
+    }
+  }
+
+  /* keep the range controls on screen even when there's nothing to show, so you
+     can navigate back out of an empty or unsynced period */
+  function renderAnalyticsShell(period, title, msg) {
+    document.getElementById('anResult').innerHTML =
+      rangeControlsHtml(period) +
+      '<div class="placeholder"><div class="placeholder-title">' + esc(title) + '</div>' +
+      '<div class="placeholder-msg">' + esc(msg) + '</div></div>';
+  }
+
+  function anSetRange(kind) {
+    /* switching the unit snaps back to the current period */
+    anRange = { kind: kind, offset: 0 };
+    loadAnalytics('load');
+  }
+
+  function anStep(delta) {
+    const next = anRange.offset + delta;
+    if (next > 0) return;                 // nothing to show in the future
+    anRange = { kind: anRange.kind, offset: next };
+    loadAnalytics('load');
+  }
+
+  function anCurrent() {
+    if (anRange.offset === 0) return;
+    anRange = { kind: anRange.kind, offset: 0 };
+    loadAnalytics('load');
+  }
+
+  function rangeControlsHtml(period) {
+    const label = period ? period.nav_label : (anRange.offset === 0 ? 'Current' : '…');
+    const atCurrent = anRange.offset === 0;
+    const kinds = [['week', 'Week'], ['month', 'Month'], ['year', 'Year']];
+    return '<div class="an-range">' +
+      '<div class="an-control">' +
+        '<div class="field-label">Range</div>' +
+        '<div class="select-wrap"><select onchange="anSetRange(this.value)">' +
+          kinds.map(([v, l]) => '<option value="' + v + '"' +
+            (anRange.kind === v ? ' selected' : '') + '>' + l + '</option>').join('') +
+        '</select></div>' +
+      '</div>' +
+      '<div class="an-control an-nav-control">' +
+        '<div class="field-label">Period</div>' +
+        '<div class="an-nav">' +
+          '<button class="an-arrow-btn" title="Previous ' + esc(anRange.kind) + '"' +
+            ' onclick="anStep(-1)">‹</button>' +
+          '<span class="an-nav-label' + (atCurrent ? '' : ' past') + '">' + esc(label) + '</span>' +
+          '<button class="an-arrow-btn" title="Next ' + esc(anRange.kind) + '"' +
+            ' onclick="anStep(1)"' + (atCurrent ? ' disabled' : '') + '>›</button>' +
+        '</div>' +
+      '</div>' +
+      (atCurrent ? '' :
+        '<button class="btn btn-secondary btn-sm an-current-btn" onclick="anCurrent()">' +
+        'Jump to Current</button>') +
+      /* the tracking sheet is kept per week, so export only belongs here */
+      (anRange.kind === 'week' && anData
+        ? '<div class="an-export">' +
+            '<button class="btn btn-secondary btn-sm" onclick="anCopyForSheets(this)">' +
+              '⧉ Copy for Sheets</button>' +
+            '<button class="conn-link" onclick="anDownloadCsv()">CSV</button>' +
+          '</div>'
+        : '') +
+    '</div>';
+  }
+
+  function anSetFilter(which, value) {
+    anFilter[which] = value;
+    renderAnalytics();
+  }
+
+  function anSetSort(key) {
+    if (anSort.key === key) {
+      anSort.dir = anSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      /* text reads best A-Z first; dates and numbers biggest-first */
+      anSort = { key: key, dir: (key === 'influencer' || key === 'platform') ? 'asc' : 'desc' };
+    }
+    renderAnalytics();
+  }
+
+  function anVisibleRows() {
+    const rows = (anData && anData.rows) || [];
+    const filtered = rows.filter(r => {
+      const who = r.influencer || 'Unmatched';
+      if (anFilter.influencer && who !== anFilter.influencer) return false;
+      if (anFilter.platform && (r.platform || '') !== anFilter.platform) return false;
+      return true;
+    });
+
+    const dir = anSort.dir === 'asc' ? 1 : -1;
+    const val = r => {
+      switch (anSort.key) {
+        case 'influencer': return (r.influencer || 'Unmatched').toLowerCase();
+        case 'platform': return platformLabel(r.platform).toLowerCase();
+        case 'views': return r.views == null ? -Infinity : r.views;
+        default: return r.date || '';
+      }
+    };
+    return filtered.sort((a, b) => {
+      const x = val(a), y = val(b);
+      if (x < y) return -1 * dir;
+      if (x > y) return 1 * dir;
+      return 0;
+    });
+  }
+
+  function anHeader(key, label, cls) {
+    const active = anSort.key === key;
+    const arrow = active ? (anSort.dir === 'asc' ? '↑' : '↓') : '';
+    return '<th class="an-th' + (active ? ' active' : '') + (cls ? ' ' + cls : '') +
+      '" tabindex="0" title="Sort by ' + esc(label) + '"' +
+      ' onclick="anSetSort(\'' + key + '\')"' +
+      ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();anSetSort(\'' + key + '\')}">' +
+      esc(label) + '<span class="an-arrow">' + arrow + '</span></th>';
+  }
+
+  function renderAnalytics(d) {
+    if (d) anData = d;
+    if (!anData) return;
+    const data = anData;
+
+    const notes = (data.warnings || []).map(w =>
+      '<div class="fm-note"><span>i</span><span>' + esc(w) + '</span></div>').join('');
+
+    const rows = anVisibleRows();
+    const totalViews = rows.reduce((s, r) => s + (r.views || 0), 0);
+    const filtered = !!(anFilter.influencer || anFilter.platform);
+
+    /* options come from the synced data, so we never offer an empty filter */
+    const whoSet = [...new Set((data.rows || []).map(r => r.influencer || 'Unmatched'))].sort();
+    const platSet = [...new Set((data.rows || []).map(r => r.platform).filter(Boolean))].sort();
+    const opts = (list, current, labeller) =>
+      list.map(v => '<option value="' + esc(v) + '"' +
+        (v === current ? ' selected' : '') + '>' +
+        esc(labeller ? labeller(v) : v) + '</option>').join('');
+
+    const controls =
+      '<div class="an-controls">' +
+        '<div class="an-control">' +
+          '<div class="field-label">Influencer</div>' +
+          '<div class="select-wrap"><select onchange="anSetFilter(\'influencer\', this.value)">' +
+            '<option value="">All influencers</option>' + opts(whoSet, anFilter.influencer) +
+          '</select></div>' +
+        '</div>' +
+        '<div class="an-control">' +
+          '<div class="field-label">Platform</div>' +
+          '<div class="select-wrap"><select onchange="anSetFilter(\'platform\', this.value)">' +
+            '<option value="">All platforms</option>' + opts(platSet, anFilter.platform, platformLabel) +
+          '</select></div>' +
+        '</div>' +
+        (filtered
+          ? '<button class="conn-link" onclick="anClearFilters()">Clear filters</button>'
+          : '') +
+      '</div>';
+
+    const periodLabel = (data.period && data.period.label) || '';
+    const scope = filtered
+      ? [anFilter.influencer, anFilter.platform ? platformLabel(anFilter.platform) : '']
+          .filter(Boolean).join(' · ')
+      : esc(periodLabel);
+
+    const stats =
+      '<div class="an-stats">' +
+        '<div class="an-stat">' +
+          '<div class="an-stat-num">' + nf.format(totalViews) + '</div>' +
+          '<div class="an-stat-lbl">Views</div>' +
+        '</div>' +
+        '<div class="an-stat">' +
+          '<div class="an-stat-num">' + nf.format(rows.length) + '</div>' +
+          '<div class="an-stat-lbl">' + (rows.length === 1 ? 'Post' : 'Posts') + '</div>' +
+        '</div>' +
+        '<div class="an-stat-meta">' +
+          '<div class="an-scope">' + esc(scope) + '</div>' +
+          (filtered ? '<div class="an-scope-sub">of ' + nf.format(data.post_count) +
+            ' posts in ' + esc(periodLabel) + '</div>' : '') +
+        '</div>' +
+      '</div>';
+
+    const stamps = '<div class="an-stamps">' +
+      stamp('Last Refreshed by Buffer', data.metrics_updated_at) +
+      stamp('Last Synced', data.synced_at) +
+    '</div>';
+
+    const ranges = rangeControlsHtml(data.period);
+
+    if (!(data.rows || []).length) {
+      document.getElementById('anResult').innerHTML = ranges + stats + stamps + notes +
+        '<div class="placeholder"><div class="placeholder-title">NO POSTS</div>' +
+        '<div class="placeholder-msg">Nothing was sent through Buffer in ' +
+        esc(periodLabel) + '.</div></div>' + unmappedHtml(data);
+      return;
+    }
+
+    const body = rows.map(r => {
+      const date = r.date
+        ? new Intl.DateTimeFormat('en-US',
+            { timeZone: TZ, month: 'short', day: 'numeric' }).format(new Date(r.date))
+        : '—';
+      /* a button, not the raw URL — the link text was never worth the width */
+      const link = r.url
+        ? '<a class="an-open" href="' + esc(r.url) + '" target="_blank" rel="noopener">View ↗</a>'
+        : '<span class="an-text" title="' + esc(r.text || '') + '">' + esc(r.text || '—') + '</span>';
+      const who = r.influencer
+        ? esc(r.influencer)
+        : '<span class="an-unknown" title="' + esc(r.channel || '') + '">Unmatched</span>';
+      const views = r.views == null ? '—' : nf.format(r.views);
+
+      return '<tr>' +
+        '<td><span class="fm-type-name">' + who + '</span></td>' +
+        '<td class="an-date">' + esc(date) + '</td>' +
+        '<td class="an-platform">' + esc(platformLabel(r.platform)) + '</td>' +
+        '<td class="an-views">' + views + '</td>' +
+        '<td class="an-url">' + link + '</td>' +
+      '</tr>';
+    }).join('');
+
+    const table = rows.length
+      ? '<div class="fm-table-wrap"><table class="fm-table"><thead><tr>' +
+          anHeader('influencer', 'Influencer') +
+          anHeader('date', 'Date') +
+          anHeader('platform', 'Platform') +
+          anHeader('views', 'Views', 'an-views') +
+          '<th>Post</th>' +
+        '</tr></thead><tbody>' + body + '</tbody></table></div>'
+      : '<div class="placeholder"><div class="placeholder-msg">No posts match this filter.' +
+        '</div></div>';
+
+    document.getElementById('anResult').innerHTML =
+      ranges + stats + controls + stamps + notes + table + unmappedHtml(data);
+  }
+
+  function anClearFilters() {
+    anFilter = { influencer: '', platform: '' };
+    renderAnalytics();
+  }
+
+  /* ── export (week view) ──────────────────────────────────
+     Columns match the tracking sheet: Post URL, Post Platform, Date, Week Of,
+     Creator, Views. Exports exactly what's on screen, so the influencer and
+     platform filters and the current sort all carry through. */
+  const EXPORT_CREATOR = 'Brian';
+  const EXPORT_HEADERS = ['Post URL', 'Post Platform', 'Date', 'Week Of', 'Creator', 'Views'];
+
+  /* the sheet spells it "Tiktok"; keep the export matching the existing column */
+  const SHEET_PLATFORMS = { tiktok: 'Tiktok', instagram: 'Instagram', youtube: 'YouTube' };
+  const sheetPlatform = s => SHEET_PLATFORMS[(s || '').toLowerCase()] || platformLabel(s);
+
+  function mdChicago(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const p = new Intl.DateTimeFormat('en-US',
+      { timeZone: TZ, month: 'numeric', day: 'numeric' }).formatToParts(d);
+    const get = t => (p.find(x => x.type === t) || {}).value || '';
+    return get('month') + '/' + get('day');
+  }
+
+  function exportRows() {
+    const weekOf = anData && anData.period ? mdChicago(anData.period.start) : '';
+    return anVisibleRows().map(r => [
+      r.url || '',
+      sheetPlatform(r.platform),
+      r.date ? mdChicago(r.date) : '',
+      weekOf,
+      EXPORT_CREATOR,
+      r.views == null ? '' : String(r.views),   // raw, so Sheets treats it as a number
+    ]);
+  }
+
+  async function anCopyForSheets(btn) {
+    const rows = exportRows();
+    if (!rows.length) { anExportFeedback(btn, 'Nothing to copy'); return; }
+    /* TSV, no header — pastes as cells straight under an existing sheet */
+    const tsv = rows.map(cols =>
+      cols.map(c => String(c).replace(/[\t\r\n]+/g, ' ')).join('\t')).join('\n');
+    try {
+      await navigator.clipboard.writeText(tsv);
+      anExportFeedback(btn, 'Copied ' + rows.length + ' rows ✓');
+    } catch (e) {
+      /* clipboard API needs a secure context and can still be blocked */
+      if (legacyCopy(tsv)) anExportFeedback(btn, 'Copied ' + rows.length + ' rows ✓');
+      else anExportFeedback(btn, 'Copy blocked — use CSV');
+    }
+  }
+
+  function legacyCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+
+  function anDownloadCsv() {
+    const rows = exportRows();
+    if (!rows.length) return;
+    const cell = v => /[",\n]/.test(v) ? '"' + String(v).replace(/"/g, '""') + '"' : v;
+    const csv = [EXPORT_HEADERS, ...rows].map(r => r.map(cell).join(',')).join('\r\n');
+    const weekOf = anData && anData.period ? anData.period.start.slice(0, 10) : 'week';
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'randcut_week_' + weekOf + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  function anExportFeedback(btn, msg) {
+    if (!btn) return;
+    const original = btn.textContent;
+    btn.textContent = msg;
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2200);
+  }
+
+  /* Buffer exposes no channel groups, so a channel whose name doesn't contain the
+     influencer's name has to be assigned by hand — once, then it's remembered. */
+  function unmappedHtml(d) {
+    const chans = d.unmapped_channels || [];
+    if (!chans.length) return '';
+    const options = (d.influencers || []).map(n =>
+      '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('');
+    const rows = chans.map(c =>
+      '<div class="an-assign-row">' +
+        '<div class="an-assign-chan">' +
+          '<span class="fm-file">' + esc(c.name || c.id) + '</span>' +
+          '<span class="an-platform">' + esc(platformLabel(c.service)) + '</span>' +
+        '</div>' +
+        '<div class="select-wrap an-assign-select">' +
+          '<select onchange="assignChannel(\'' + esc(c.id) + '\', this.value)">' +
+            '<option value="">Unassigned</option>' + options +
+          '</select>' +
+        '</div>' +
+      '</div>').join('');
+    return '<div class="an-assign">' +
+      '<div class="sub-label">Unassigned channels</div>' +
+      '<div class="conn-detail">These didn\'t match an influencer by name. Pick one and it ' +
+        'sticks — the choice is saved on the server.</div>' +
+      rows +
+      '<div class="form-error" id="anAssignError"></div>' +
+    '</div>';
+  }
+
+  async function assignChannel(channelId, influencer) {
+    const err = document.getElementById('anAssignError');
+    if (err) err.classList.remove('visible');
+    document.getElementById('anLoading').classList.add('visible');
+    try {
+      const res = await fetch('/analytics/channel-map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel_id: channelId, influencer: influencer }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        if (err) { err.textContent = data.error; err.classList.add('visible'); }
+        return;
+      }
+      renderAnalytics(data);
+    } catch (e) {
+      if (err) { err.textContent = e.message; err.classList.add('visible'); }
+    } finally {
+      document.getElementById('anLoading').classList.remove('visible');
+    }
   }
 
   /* ─── CONNECTIONS ─────────────────────────────────────── */

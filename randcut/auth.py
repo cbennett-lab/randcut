@@ -305,3 +305,16 @@ def disconnect(service: str):
     if service not in ("google", "buffer"):
         raise AuthError(f"Unknown service: {service}")
     _save_service(service, None)
+
+
+# ── small persisted settings ─────────────────────────────────────────────
+# Not secrets, but they belong on the same volume-backed store so they survive
+# a redeploy alongside the credentials.
+def get_setting(name: str, default=None):
+    return (_read_store().get("settings") or {}).get(name, default)
+
+
+def save_setting(name: str, value):
+    settings = dict(_read_store().get("settings") or {})
+    settings[name] = value
+    _save_service("settings", settings)

@@ -29,6 +29,7 @@ except ImportError:
 # Imported *after* load_dotenv: auth reads its config at module level, so it
 # would otherwise never see anything from .env.
 import auth  # noqa: E402
+import buffer_api  # noqa: E402
 
 app = FastAPI()
 
@@ -1072,6 +1073,129 @@ async def connections(request: Request):
              "auth_style": "token", **buffer},
         ],
     }
+
+
+def influencer_names() -> list[str]:
+    """Influencer display names, from the same Drive data the Generate tab uses,
+    so Analytics and Generate always agree on who exists."""
+    names = {p["display"] for cat in STACKED_CATEGORIES.values()
+             for p in cat["players"].values()}
+    return sorted(names)
+
+
+CHANNEL_MAP_SETTING = "buffer_channel_map"
+
+
+@app.get("/analytics/posts")
+async def analytics_posts(range: str = "month", offset: int = 0,
+                          force: bool = False, cached_only: bool = False):
+    """Posts for one week / month / year.
+
+    Syncing is manual: `cached_only=true` renders the last sync of that period
+    without touching Buffer (what opening the tab does), `force=true` spends a
+    request to re-read. Moving to a period we haven't fetched does read Buffer —
+    that's an explicit navigation, not a background poll.
+    """
+    token = auth.buffer_token()
+    if not token:
+        return JSONResponse(status_code=400, content={
+            "error": "No Buffer API key saved. Add one in Connections — create it at "
+                     "publish.buffer.com/settings/api (organization owners only)."})
+    names = influencer_names()
+    overrides = auth.get_setting(CHANNEL_MAP_SETTING, {}) or {}
+    try:
+        period = buffer_api.period_bounds(range, offset)
+    except buffer_api.BufferError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    if offset > 0:
+        return JSONResponse(status_code=400, content={"error": "That period is in the future."})
+
+    nav = {"kind": period["kind"], "offset": period["offset"], "label": period["label"],
+           "nav_label": period["nav_label"], "is_current": period["is_current"]}
+
+    if cached_only:
+        cached = buffer_api.last_sync(token, names, overrides, period)
+        if cached is None:
+            return {"synced": False, "influencers": names, "period": nav}
+        return {**cached, "synced": True, "cached": True, "influencers": names}
+
+    try:
+        data = buffer_api.posts_in_period(token, names, period,
+                                          force=force, overrides=overrides)
+        return {**data, "synced": True, "influencers": names}
+    except buffer_api.BufferError as e:
+        return JSONResponse(status_code=502, content={"error": str(e), "period": nav})
+
+
+@app.post("/analytics/channel-map")
+async def set_channel_map(request: Request):
+    """Assign a Buffer channel to an influencer by hand.
+
+    Buffer's API exposes no channel groups, so name matching is all we get
+    automatically — and it fails whenever the channel spells the name
+    differently ("ChristyPlaysVR" vs "Christie").
+    """
+    body = await request.json()
+    channel_id = (body.get("channel_id") or "").strip()
+    influencer = (body.get("influencer") or "").strip() or None
+    range_kind = body.get("range") or "month"
+    offset = int(body.get("offset") or 0)
+    if not channel_id:
+        return JSONResponse(status_code=400, content={"error": "channel_id is required."})
+    if influencer and influencer not in influencer_names():
+        return JSONResponse(status_code=400, content={
+            "error": f"Unknown influencer: {influencer}"})
+
+    mapping = dict(auth.get_setting(CHANNEL_MAP_SETTING, {}) or {})
+    if influencer:
+        mapping[channel_id] = influencer
+    else:
+        mapping.pop(channel_id, None)      # blank clears the assignment
+    auth.save_setting(CHANNEL_MAP_SETTING, mapping)
+
+    token = auth.buffer_token()
+    if not token:
+        return {"ok": True, "channel_map": mapping}
+    try:
+        # assigning is an explicit action, so re-syncing here is consistent with
+        # manual-only refresh; channels are cached so it's one posts read
+        period = buffer_api.period_bounds(range_kind, offset)
+        data = buffer_api.posts_in_period(token, influencer_names(), period,
+                                          force=True, overrides=mapping)
+        return {**data, "synced": True, "influencers": influencer_names(),
+                "channel_map": mapping}
+    except buffer_api.BufferError as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
+
+
+@app.get("/analytics/buffer-check")
+async def analytics_buffer_check(force: bool = False):
+    """Diagnostic: what this Buffer schema actually exposes.
+
+    The metrics queries are experimental, so this reports the real field and enum
+    names instead of leaving a mismatch to surface as a broken table.
+    """
+    token = auth.buffer_token()
+    if not token:
+        return JSONResponse(status_code=400, content={"error": "No Buffer API key saved."})
+    try:
+        report = buffer_api.capability_report(token, force=force)
+        org_id = buffer_api.organization_id(token)
+        chans = buffer_api.channels(token, org_id)
+        overrides = auth.get_setting(CHANNEL_MAP_SETTING, {}) or {}
+        mapping, unmapped = buffer_api.map_channels(chans, influencer_names(), overrides)
+        return {
+            "schema": report,
+            "channel_map_overrides": overrides,
+            "channel_count": len(chans),
+            "mapped": [{"channel": c["name"], "service": c["service"],
+                        "group": c["group"], "influencer": mapping.get(c["id"])}
+                       for c in chans],
+            "unmapped_channels": unmapped,
+            "influencers_known": influencer_names(),
+        }
+    except buffer_api.BufferError as e:
+        return JSONResponse(status_code=502, content={"error": str(e)})
 
 
 @app.post("/connections/buffer")
