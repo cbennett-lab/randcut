@@ -882,10 +882,11 @@ def sweep_public_media():
             pass
 
 
-# The render master is 2160x3840 at ~50Mbps — around 80MB for 12 seconds. That's
-# a mastering format, not a delivery one: the networks ingest 1080x1920, and a
-# file that size is what made TikTok report "Video could not be read from its
-# URL". So Buffer is handed a downscaled copy instead.
+# Masters go to Buffer as-is. A downscale is available but OFF by default: it was
+# added while chasing "Video could not be read from its URL", which turned out to
+# be a HEAD 404 on the media route, not the file. Set POST_TRANSCODE=1 to turn it
+# back on if Buffer ever struggles with an ~80MB fetch.
+POST_TRANSCODE = os.environ.get("POST_TRANSCODE") == "1"
 DELIVERY_WIDTH = 1080
 DELIVERY_HEIGHT = 1920
 DELIVERY_CRF = "23"
@@ -918,7 +919,7 @@ def make_delivery_copy(src: Path, dest: Path):
 
 
 def publish_media(job: dict) -> str:
-    """Put a delivery-sized copy of a finished render where Buffer can fetch it."""
+    """Put a copy of a finished render where Buffer can fetch it."""
     if job.get("media_token"):
         existing = PUBLIC_MEDIA_DIR / f"{job['media_token']}.mp4"
         if existing.exists():
@@ -933,7 +934,10 @@ def publish_media(job: dict) -> str:
     dest = PUBLIC_MEDIA_DIR / f"{token}.mp4"
     tmp = dest.with_suffix(".part")
     try:
-        make_delivery_copy(src, tmp)
+        if POST_TRANSCODE:
+            make_delivery_copy(src, tmp)
+        else:
+            shutil.copyfile(src, tmp)          # the master already has +faststart
         tmp.replace(dest)                      # atomic, so Buffer never sees a partial file
     finally:
         tmp.unlink(missing_ok=True)
