@@ -4,6 +4,7 @@ from fastapi.responses import (FileResponse, JSONResponse, RedirectResponse,
                                StreamingResponse, Response)
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 import subprocess
 import uuid
 import os
@@ -1047,15 +1048,21 @@ async def startup_event():
     """Populate categories from Drive and start the render worker."""
     threading.Thread(target=render_worker, daemon=True).start()
     load_post_queue()
-    try:
-        populate_stacked_categories()
-        threading.Thread(target=prefetch_player_images, daemon=True).start()
-    except Exception as e:
-        print(f"Warning: Could not auto-populate categories from Drive: {e}")
+
+    def warm_drive():
+        # off the startup path so the app serves immediately — Buffer may be
+        # fetching /m/<token>.mp4 for an already-queued post during a redeploy
+        try:
+            populate_stacked_categories()
+            prefetch_player_images()
+        except Exception as e:
+            print(f"Warning: Could not auto-populate categories from Drive: {e}")
+
+    threading.Thread(target=warm_drive, daemon=True).start()
 
 
 @app.get("/stacked-categories")
-async def get_stacked_categories():
+def get_stacked_categories():
     try:
         populate_stacked_categories()
         threading.Thread(target=prefetch_player_images, daemon=True).start()
@@ -1144,7 +1151,7 @@ def category_inventory(cat_key: str, cat: dict, player_key: str, cache: dict) ->
 
 
 @app.get("/influencer-inventory")
-async def influencer_inventory(player: str):
+def influencer_inventory(player: str):
     """Pairing status for every video type this influencer appears in.
 
     Returns the per-clip rows too, so the UI can expand a type without another
@@ -1238,7 +1245,7 @@ async def auth_login():
 
 
 @app.get("/auth/callback")
-async def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
     if error:
         return RedirectResponse(f"/login?error={quote(error)}")
     expected = request.cookies.get(auth.STATE_COOKIE)
@@ -1345,7 +1352,7 @@ CHANNEL_MAP_SETTING = "buffer_channel_map"
 
 
 @app.get("/analytics/posts")
-async def analytics_posts(range: str = "month", offset: int = 0,
+def analytics_posts(range: str = "month", offset: int = 0,
                           force: bool = False, cached_only: bool = False):
     """Posts for one week / month / year.
 
@@ -1387,6 +1394,8 @@ async def analytics_posts(range: str = "month", offset: int = 0,
 
 @app.post("/analytics/channel-map")
 async def set_channel_map(request: Request):
+    """Async because it reads the request body; the Buffer re-sync it triggers is
+    handed to a thread so it can't block the event loop."""
     """Assign a Buffer channel to an influencer by hand.
 
     Buffer's API exposes no channel groups, so name matching is all we get
@@ -1418,8 +1427,9 @@ async def set_channel_map(request: Request):
         # assigning is an explicit action, so re-syncing here is consistent with
         # manual-only refresh; channels are cached so it's one posts read
         period = buffer_api.period_bounds(range_kind, offset)
-        data = buffer_api.posts_in_period(token, influencer_names(), period,
-                                          force=True, overrides=mapping)
+        data = await run_in_threadpool(
+            buffer_api.posts_in_period, token, influencer_names(), period,
+            force=True, overrides=mapping)
         return {**data, "synced": True, "influencers": influencer_names(),
                 "channel_map": mapping}
     except buffer_api.BufferError as e:
@@ -1427,7 +1437,7 @@ async def set_channel_map(request: Request):
 
 
 @app.get("/analytics/buffer-check")
-async def analytics_buffer_check(force: bool = False):
+def analytics_buffer_check(force: bool = False):
     """Diagnostic: what this Buffer schema actually exposes.
 
     The metrics queries are experimental, so this reports the real field and enum
@@ -1476,7 +1486,7 @@ async def remove_connection(service: str, request: Request):
 
 
 @app.get("/player-image/{player_key}")
-async def get_player_image(player_key: str):
+def get_player_image(player_key: str):
     if player_key not in PLAYER_IMAGE_IDS:
         return JSONResponse(status_code=404, content={"error": "No image for this player"})
     if player_key in PLAYER_IMAGE_CACHE:
@@ -1526,7 +1536,7 @@ async def generate_stacked(request: Request):
 
 
 @app.post("/queue/{job_id}/post")
-async def stage_post(job_id: str):
+def stage_post(job_id: str):
     """Stage a finished render for review on the Posting tab.
 
     Nothing reaches Buffer here. The caption, the channels and the public video
@@ -1597,7 +1607,7 @@ async def get_posts():
 
 
 @app.get("/posts/media-check")
-async def posts_media_check(request: Request):
+def posts_media_check(request: Request):
     """Is the media URL Buffer would fetch actually reachable from outside?
 
     Checks the origin we'd hand Buffer and, if anything is staged, that exact URL.
@@ -1624,7 +1634,9 @@ async def posts_media_check(request: Request):
 
 
 @app.post("/posts/{post_id}/send")
-async def send_post(post_id: str, request: Request):
+def send_post(post_id: str, request: Request):
+    # deliberately a plain def: Buffer fetches /m/<token>.mp4 from this same
+    # server while this call is in flight, so the event loop must stay free
     item = find_post(post_id)
     if not item:
         return JSONResponse(status_code=404, content={"error": "Post not found"})
@@ -1651,7 +1663,7 @@ async def send_post(post_id: str, request: Request):
 
 
 @app.post("/posts/send-all")
-async def send_all_posts(request: Request):
+def send_all_posts(request: Request):
     """Send every pending post. One failure doesn't stop the rest."""
     base = public_base_url(request)
     if not base.startswith("https://"):
@@ -1778,7 +1790,7 @@ async def download(filename: str):
 
 
 @app.get("/download-all")
-async def download_all():
+def download_all():
     """Zip every finished render in the queue into one download."""
     with QUEUE_LOCK:
         finished = [job_status[j] for j in JOB_ORDER
