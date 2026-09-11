@@ -882,8 +882,40 @@ def sweep_public_media():
             pass
 
 
+# The render master is 2160x3840 at ~50Mbps — around 80MB for 12 seconds. That's
+# a mastering format, not a delivery one: the networks ingest 1080x1920, and a
+# file that size is what made TikTok report "Video could not be read from its
+# URL". So Buffer is handed a downscaled copy instead.
+DELIVERY_WIDTH = 1080
+DELIVERY_HEIGHT = 1920
+DELIVERY_CRF = "23"
+DELIVERY_MAXRATE = "8M"
+
+
+def make_delivery_copy(src: Path, dest: Path):
+    """Transcode a render to a social-delivery MP4."""
+    cmd = [
+        "ffmpeg", "-y", "-i", str(src),
+        "-vf", f"scale={DELIVERY_WIDTH}:{DELIVERY_HEIGHT}:force_original_aspect_ratio=decrease,"
+               f"pad={DELIVERY_WIDTH}:{DELIVERY_HEIGHT}:(ow-iw)/2:(oh-ih)/2",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", DELIVERY_CRF,
+        "-maxrate", DELIVERY_MAXRATE, "-bufsize", "16M",
+        "-pix_fmt", "yuv420p",          # some networks reject anything else
+        "-r", "30",
+        "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+        # moov atom up front, so a fetcher can read the header without the whole file
+        "-movflags", "+faststart",
+        "-threads", "1",                # keep well clear of the render worker's memory
+        str(dest),
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise ValueError("Could not prepare the video for posting: "
+                         + proc.stderr.decode(errors="replace")[-300:])
+
+
 def publish_media(job: dict) -> str:
-    """Copy a finished render somewhere Buffer can fetch it. Returns the token."""
+    """Put a delivery-sized copy of a finished render where Buffer can fetch it."""
     if job.get("media_token"):
         existing = PUBLIC_MEDIA_DIR / f"{job['media_token']}.mp4"
         if existing.exists():
@@ -897,8 +929,11 @@ def publish_media(job: dict) -> str:
     token = secrets.token_urlsafe(24)
     dest = PUBLIC_MEDIA_DIR / f"{token}.mp4"
     tmp = dest.with_suffix(".part")
-    shutil.copyfile(src, tmp)
-    tmp.replace(dest)                          # atomic, so Buffer never sees a partial file
+    try:
+        make_delivery_copy(src, tmp)
+        tmp.replace(dest)                      # atomic, so Buffer never sees a partial file
+    finally:
+        tmp.unlink(missing_ok=True)
     job["media_token"] = token
     sweep_public_media()
     return token
@@ -998,7 +1033,8 @@ def send_staged_post(item: dict, base: str) -> dict:
     for chan in item["channels"]:
         entry = {"platform": chan.get("service"), "handle": chan.get("name")}
         try:
-            post = buffer_api.create_video_post(token, chan["id"], item["caption"], video_url)
+            post = buffer_api.create_video_post(token, chan["id"], item["caption"],
+                                                video_url, service=chan.get("service"))
             entry.update({"ok": True, "post_id": post.get("id"), "due_at": post.get("dueAt")})
         except buffer_api.BufferError as e:
             print(f"Buffer createPost failed for {chan.get('service')} "

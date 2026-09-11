@@ -18,6 +18,7 @@ Two things shape this module:
 """
 
 import hashlib
+import os
 import re
 import threading
 import time
@@ -580,13 +581,46 @@ def _gql_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+# Networks reject a post outright without their own required metadata:
+# Instagram needs a type and shouldShareToFeed, YouTube a title and categoryId.
+# TikTok's fields are all optional.
+YOUTUBE_CATEGORY_ID = os.environ.get("YOUTUBE_CATEGORY_ID", "20")   # 20 = Gaming
+YOUTUBE_TITLE_MAX = 100
+
+
+def youtube_title(caption: str) -> str:
+    """A YouTube title from the caption: first line, no tags, within the limit."""
+    line = (caption or "").strip().splitlines()[0] if (caption or "").strip() else ""
+    line = re.sub(r"\s+", " ", line).replace("<", "").replace(">", "").strip()
+    if not line:
+        line = "GymClass VR"
+    if len(line) > YOUTUBE_TITLE_MAX:
+        cut = line[:YOUTUBE_TITLE_MAX]
+        # avoid slicing a word (or an emoji sequence) in half
+        line = cut.rsplit(" ", 1)[0] if " " in cut[-24:] else cut
+    return line.strip()
+
+
+def _platform_metadata(service: str, caption: str) -> str:
+    s = (service or "").lower()
+    if s == "instagram":
+        # a 9:16 video is a Reel; sharing to feed keeps it on the grid too
+        return "instagram: { type: reel, shouldShareToFeed: true }"
+    if s == "youtube":
+        return (f'youtube: {{ title: {_gql_string(youtube_title(caption))}, '
+                f'categoryId: "{_literal_id(YOUTUBE_CATEGORY_ID)}" }}')
+    return ""
+
+
 def create_video_post(token: str, channel_id: str, text: str, video_url: str,
-                      thumbnail_offset_ms: int = 1000) -> dict:
+                      service: str = "", thumbnail_offset_ms: int = 1000) -> dict:
     """Queue one video post into a channel's next available slot.
 
     `mode: addToQueue` with `schedulingType: automatic` is Buffer's own way of
     saying "next slot in this channel's posting schedule".
     """
+    meta = _platform_metadata(service, text)
+    meta_block = f",\n        metadata: {{ {meta} }}" if meta else ""
     query = f"""
     mutation RandcutCreatePost {{
       createPost(input: {{
@@ -595,7 +629,7 @@ def create_video_post(token: str, channel_id: str, text: str, video_url: str,
         schedulingType: automatic,
         mode: addToQueue,
         assets: [{{ video: {{ url: {_gql_string(video_url)},
-                              metadata: {{ thumbnailOffset: {int(thumbnail_offset_ms)} }} }} }}]
+                              metadata: {{ thumbnailOffset: {int(thumbnail_offset_ms)} }} }} }}]{meta_block}
       }}) {{
         ... on PostActionSuccess {{ post {{ id dueAt }} }}
         ... on MutationError {{ message }}
