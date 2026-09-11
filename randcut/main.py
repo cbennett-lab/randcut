@@ -996,10 +996,17 @@ def check_media_url(url: str) -> dict:
     """Fetch our own public media URL the way Buffer would: no cookies, from
     outside. Exercises DNS, TLS, Railway routing and the login gate in one go."""
     try:
+        # fetchers commonly probe with HEAD before downloading, so check that too
+        head = requests.head(url, timeout=20, allow_redirects=False)
         resp = requests.get(url, headers={"Range": "bytes=0-2047"}, timeout=20,
                             allow_redirects=False)
     except requests.RequestException as e:
         return {"ok": False, "detail": f"Requesting it failed: {e}."}
+
+    if head.status_code not in (200, 206):
+        return {"ok": False, "detail": f"A HEAD request returned {head.status_code} while GET "
+                                       f"returned {resp.status_code}. Fetchers probe with HEAD "
+                                       f"first, so the route has to answer it."}
 
     ctype = resp.headers.get("content-type", "")
     if resp.status_code in (301, 302, 303, 307, 308):
@@ -1258,7 +1265,10 @@ async def healthz():
     return {"ok": True}
 
 
-@app.get(PUBLIC_MEDIA_PREFIX + "{name}")
+# GET *and* HEAD: FastAPI's @app.get() does not also register HEAD the way plain
+# Starlette does, and media fetchers (Buffer included) probe with HEAD first.
+# A 404 there reads to them as "the video could not be read from its URL".
+@app.api_route(PUBLIC_MEDIA_PREFIX + "{name}", methods=["GET", "HEAD"])
 async def public_media(name: str):
     """Serve one published render to Buffer, unauthenticated.
 
