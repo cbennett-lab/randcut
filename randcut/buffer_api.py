@@ -38,6 +38,10 @@ except Exception as e:                      # slim images without tzdata
 
 API_URL = "https://api.buffer.com"
 TIMEOUT = 30
+# createPost makes Buffer fetch the video before it answers, and an 80MB master
+# over a cold connection can take well past 30s. Reads only, so a long wait is
+# cheap; a premature timeout is not (see BufferTimeout below).
+MUTATION_TIMEOUT = 180
 
 # Buffer's own guidance: metrics land about a day behind the source network.
 METRICS_LAG_NOTE = "Buffer refreshes post metrics daily, so today's numbers can run ~24h behind."
@@ -62,6 +66,14 @@ _cache: dict[str, tuple[float, object]] = {}
 
 class BufferError(Exception):
     """Something went wrong talking to Buffer, phrased for the UI."""
+
+
+class BufferTimeout(BufferError):
+    """We gave up waiting — Buffer may or may not have done the thing.
+
+    Distinct from BufferError because the outcome is *unknown*: a createPost that
+    times out may well have been created, so retrying can duplicate a post.
+    """
 
 
 def _key(token: str, *parts: str) -> str:
@@ -89,14 +101,21 @@ def clear_cache():
         _cache.clear()
 
 
-def _gql(token: str, query: str, variables: dict | None = None) -> dict:
+def _gql(token: str, query: str, variables: dict | None = None,
+         timeout: int | None = None) -> dict:
     try:
         resp = requests.post(
             API_URL,
             json={"query": query, "variables": variables or {}},
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            timeout=TIMEOUT,
+            timeout=timeout or TIMEOUT,
         )
+    except (requests.Timeout, requests.ConnectionError) as e:
+        # no response came back, so we cannot know whether Buffer acted
+        raise BufferTimeout(
+            f"No answer from Buffer after {timeout or TIMEOUT}s, so it's unclear whether the "
+            f"post was created. Check the channel's queue in Buffer before retrying — a retry "
+            f"could duplicate it.") from e
     except requests.RequestException as e:
         raise BufferError(f"Could not reach Buffer: {e}") from e
 
@@ -640,7 +659,7 @@ def create_video_post(token: str, channel_id: str, text: str, video_url: str,
       }}
     }}
     """
-    result = (_gql(token, query) or {}).get("createPost") or {}
+    result = (_gql(token, query, timeout=MUTATION_TIMEOUT) or {}).get("createPost") or {}
     # the union returns either a post or an error object, both HTTP 200
     if result.get("message"):
         raise BufferError(result["message"])

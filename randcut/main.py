@@ -537,11 +537,24 @@ def clip_number(name: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def pick_pairs(matched_pairs: list[tuple], count: int, seed_clip: int | None = None) -> list[tuple]:
-    """Choose `count` (vr, irl) pairs. If seed_clip is given, force the pair whose VR
-    clip number matches it to be first; the remaining pairs are still chosen randomly."""
+def pick_pairs(matched_pairs: list[tuple], count: int, seed_clip: int | None = None,
+               avoid_first: set[int] | None = None) -> list[tuple]:
+    """Choose `count` (vr, irl) pairs.
+
+    A given seed_clip forces that pair first. Otherwise the first pair avoids any
+    clip number in `avoid_first` — the first clips other renders of the same
+    type/player already used — so two videos from one Standard Week can't open on
+    the same clip, and therefore can't be the same video. If every clip has been
+    used the constraint is dropped rather than failing.
+    """
     if seed_clip is None:
-        return random.sample(matched_pairs, count)
+        avoid = avoid_first or set()
+        fresh = [p for p in matched_pairs if clip_number(p[0]["name"]) not in avoid]
+        pool = fresh or matched_pairs           # all used up: start over rather than fail
+        first = random.choice(pool)
+        remaining = [p for p in matched_pairs if p is not first]
+        rest = random.sample(remaining, count - 1) if count > 1 else []
+        return [first] + rest
 
     first = next((pair for pair in matched_pairs if clip_number(pair[0]["name"]) == seed_clip), None)
     if first is None:
@@ -550,6 +563,27 @@ def pick_pairs(matched_pairs: list[tuple], count: int, seed_clip: int | None = N
     remaining = [pair for pair in matched_pairs if pair is not first]
     rest = random.sample(remaining, count - 1) if count > 1 else []
     return [first] + rest
+
+
+def first_clips_in_flight(category_key: str, player_key: str, exclude_job: str) -> set[int]:
+    """First clip numbers already taken by other renders of the same type+player.
+
+    Scoped to the current queue, which is exactly the batch a Standard Week makes.
+    The worker is serial, so by the time a job runs the earlier ones have recorded
+    what they used.
+    """
+    used = set()
+    with QUEUE_LOCK:
+        jobs = [job_status[j] for j in JOB_ORDER if j in job_status]
+    for job in jobs:
+        if job["job_id"] == exclude_job or job.get("category") != category_key:
+            continue
+        if job.get("player") != player_key or not job.get("clips_used"):
+            continue
+        n = clip_number(job["clips_used"][0])    # entries are "<vr> + <irl>", first is the opener
+        if n is not None:
+            used.add(n)
+    return used
 
 
 def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_top: bool, seed_clip: int | None = None):
@@ -579,7 +613,8 @@ def run_stacked_pipeline(job_id: str, category_key: str, player_key: str, vr_on_
         if len(matched_pairs) < NUM_PAIRS:
             raise ValueError(f"Only {len(matched_pairs)} matched pairs found — need at least {NUM_PAIRS}. Check filenames match.")
 
-        chosen_pairs = pick_pairs(matched_pairs, NUM_PAIRS, seed_clip)
+        chosen_pairs = pick_pairs(matched_pairs, NUM_PAIRS, seed_clip,
+                                  first_clips_in_flight(category_key, player_key, job_id))
         pair_names = [f"{vr['name']} + {irl['name']}" for vr, irl in chosen_pairs]
         job_status[job_id]["clips_used"] = pair_names
         job_status[job_id]["message"] = f"Found {len(matched_pairs)} pairs. Downloading {NUM_PAIRS}..."
@@ -684,7 +719,10 @@ def run_combo_pipeline(job_id: str, category_key: str, player_key: str, vr_on_to
                     f"Only {len(matched_pairs)} matched pairs in '{segment['source']}' — need {count}."
                 )
 
-            chosen_pairs = pick_pairs(matched_pairs, count, seed_clip if seg_idx == 0 else None)
+            chosen_pairs = pick_pairs(
+                matched_pairs, count,
+                seed_clip if seg_idx == 0 else None,
+                first_clips_in_flight(src_key, player_key, job_id) if seg_idx == 0 else None)
             all_clips_used += [f"{vr['name']} + {irl['name']}" for vr, irl in chosen_pairs]
             all_chosen_vr += [vr for vr, _ in chosen_pairs]
 
@@ -798,6 +836,81 @@ def render_worker():
                     CURRENT["proc"] = None
         finally:
             WORK_QUEUE.task_done()
+
+
+# ─────────────────────────────────────────────
+# STANDARD WEEK
+# Blocks and Layups pull best, so they get two each and everything else one —
+# which lands on 7 exactly when an influencer has all five types.
+STANDARD_WEEK_SIZE = 7
+WEEK_PRIORITY_COUNT = 2
+# Matched as whole names, not substrings: "My Best Layups and Blocks" is its own
+# video type and must not count as Layups or Blocks. Comma-separated; folder name
+# or category key, punctuation and case ignored.
+WEEK_PRIORITY = os.environ.get("WEEK_PRIORITY", "My Best Blocks,My Best Layups")
+
+
+def _norm_type(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+WEEK_PRIORITY_NAMES = {_norm_type(n) for n in WEEK_PRIORITY.split(",") if n.strip()}
+
+
+def _is_priority(cat_key: str, label: str) -> bool:
+    return bool(WEEK_PRIORITY_NAMES & {_norm_type(cat_key), _norm_type(label)})
+
+
+def standard_week_counts(types: list[dict], size: int = STANDARD_WEEK_SIZE) -> dict:
+    """How many of each video type a Standard Week should contain.
+
+    Priority types get two, everything else one. Short of `size`, top up at
+    random; over it, trim the extras (non-priority first) so the week stays at
+    `size`.
+    """
+    if not types:
+        return {}
+    priority = [t for t in types if _is_priority(t["key"], t.get("label", ""))]
+    others = [t for t in types if t not in priority]
+
+    counts = {t["key"]: 0 for t in types}
+    # order the singles randomly so the same types aren't dropped every week
+    shuffled_others = others[:]
+    random.shuffle(shuffled_others)
+    slots = ([t for t in priority for _ in range(WEEK_PRIORITY_COUNT)] + shuffled_others)
+
+    for t in slots[:size]:
+        counts[t["key"]] += 1
+
+    total = sum(counts.values())
+    while total < size:
+        # pad the least-used type so a short roster stays balanced (2 types -> 4/3,
+        # not 5/2) — which is also what keeps the week spaceable
+        fewest = min(counts.values())
+        candidates = [k for k, v in counts.items() if v == fewest]
+        counts[random.choice(candidates)] += 1
+        total += 1
+    return {k: v for k, v in counts.items() if v}
+
+
+def spread_week(counts: dict) -> list[str]:
+    """Order the week so the same type never lands back-to-back.
+
+    Renders reach the post queue in this order, so spacing here is what keeps two
+    Blocks from publishing one after the other. Takes the most-remaining type each
+    time, skipping whatever was just used.
+    """
+    remaining = dict(counts)
+    out: list[str] = []
+    while sum(remaining.values()) > 0:
+        options = [k for k, v in remaining.items() if v > 0 and (not out or k != out[-1])]
+        if not options:                      # only the previous type is left
+            options = [k for k, v in remaining.items() if v > 0]
+        random.shuffle(options)              # break ties differently each week
+        pick = max(options, key=lambda k: remaining[k])
+        out.append(pick)
+        remaining[pick] -= 1
+    return out
 
 
 def enqueue_job(category_key: str, player_key: str, vr_on_top: bool, seed_clip: int | None) -> str:
@@ -1064,17 +1177,24 @@ def send_staged_post(item: dict, base: str) -> dict:
         except buffer_api.BufferError as e:
             print(f"Buffer createPost failed for {chan.get('service')} "
                   f"{chan.get('name')}: {e}")
-            entry.update({"ok": False, "error": str(e)})
+            # a timeout means "unknown", not "failed" — keep them apart so the UI
+            # doesn't invite a retry that duplicates a post Buffer already made
+            entry.update({"ok": False, "error": str(e),
+                          "indeterminate": isinstance(e, buffer_api.BufferTimeout)})
         results.append(entry)
 
     ok = [r for r in results if r.get("ok")]
     failed = [r for r in results if not r.get("ok")]
+    unknown = [r for r in failed if r.get("indeterminate")]
+    message = (f"Queued to {len(ok)} of {len(results)} channels" if failed
+               else f"Queued to {len(ok)} channel{'s' if len(ok) != 1 else ''}")
+    if unknown:
+        message += f" · {len(unknown)} unconfirmed"
     item.update({
         "results": results,
         "sent_at": time.time(),
         "status": "posted" if not failed else ("partial" if ok else "error"),
-        "message": (f"Queued to {len(ok)} of {len(results)} channels" if failed
-                    else f"Queued to {len(ok)} channel{'s' if len(ok) != 1 else ''}"),
+        "message": message,
     })
     mirror_post_status(item)
     return item
@@ -1817,6 +1937,32 @@ async def remove_post(post_id: str):
     if item and (job := job_status.get(item.get("job_id"))):
         job.update({"post_status": None, "post_message": None, "post_id": None})
     return post_queue_snapshot()
+
+
+@app.post("/standard-week")
+async def standard_week(request: Request):
+    """Queue a week's worth of renders for one influencer, spaced by type."""
+    body = await request.json()
+    player_key = body.get("player")
+    vr_on_top = body.get("vr_on_top", True)
+
+    types = [{"key": k, "label": c["label"]}
+             for k, c in STACKED_CATEGORIES.items() if player_key in c.get("players", {})]
+    if not types:
+        return JSONResponse(status_code=400, content={
+            "error": "No video types found for that influencer."})
+
+    counts = standard_week_counts(types)
+    order = spread_week(counts)
+    for cat_key in order:
+        enqueue_job(cat_key, player_key, vr_on_top, None)
+
+    labels = {t["key"]: t["label"] for t in types}
+    return {
+        "queue": queue_snapshot(),
+        "plan": [{"key": k, "label": labels.get(k, k), "count": v} for k, v in counts.items()],
+        "order": [labels.get(k, k) for k in order],
+    }
 
 
 @app.get("/queue")

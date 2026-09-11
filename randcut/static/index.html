@@ -359,6 +359,8 @@
   }
   .pt-handle.ok { color: var(--green); }
   .pt-handle.failed { color: #cc3333; text-decoration: line-through; }
+  .pt-handle.unknown { color: var(--accent2); }
+  .pt-handle.unknown .pt-icon { color: var(--accent2); }
   .pt-icon { width: 14px; height: 14px; flex-shrink: 0; color: var(--muted); }
   .pt-handle.ok .pt-icon { color: var(--green); }
   .pt-handle.failed .pt-icon { color: #cc3333; }
@@ -374,6 +376,7 @@
     margin-top: 5px; word-break: break-word;
   }
   .pt-error strong { font-weight: 600; }
+  .pt-error.unknown { color: var(--accent2); }
   .pt-vid { color: var(--green); text-decoration: none; }
   .pt-vid:hover { text-decoration: underline; }
   .pt-missing { color: #cc3333; }
@@ -1179,9 +1182,11 @@
 
     const inf = influencers[selectedPlayer];
     document.getElementById('weekHint').textContent = inf
-      ? 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across ' + inf.display + "'s " +
-        inf.cats.length + (inf.cats.length === 1 ? ' video type.' : ' video types.')
-      : 'Standard Week queues ' + STANDARD_WEEK + ' renders spread across every video type the influencer has.';
+      ? 'Standard Week queues ' + STANDARD_WEEK + ' renders across ' + inf.display + "'s " +
+        inf.cats.length + (inf.cats.length === 1 ? ' video type' : ' video types') +
+        ' — two each of Blocks and Layups, one of the rest, spaced so no type repeats back-to-back.'
+      : 'Standard Week queues ' + STANDARD_WEEK + ' renders — two each of Blocks and Layups, ' +
+        'one of every other type, spaced so no type repeats back-to-back.';
   }
 
   /* ─── POSTING ─────────────────────────────────────────────
@@ -1241,7 +1246,7 @@
     const rows = posts.map(p => {
       const handles = (p.channels || []).map(c => {
         const sent = (p.results || []).find(r => r.platform === c.service);
-        const cls = sent ? (sent.ok ? ' ok' : ' failed') : '';
+        const cls = sent ? (sent.ok ? ' ok' : (sent.indeterminate ? ' unknown' : ' failed')) : '';
         const tip = sent ? (sent.ok ? 'Queued' + (sent.due_at ? ' for ' + new Date(sent.due_at).toLocaleString() : '')
                                     : sent.error) : platformLabel(c.service);
         return '<div class="pt-handle' + cls + '" title="' + esc(tip) + '">' +
@@ -1268,7 +1273,8 @@
         seen.push(r.error); return true;
       }).map(r => {
         const who = errs.filter(e => e.error === r.error).map(e => platformLabel(e.platform)).join(', ');
-        return '<div class="pt-error"><strong>' + esc(who) + ':</strong> ' + esc(r.error) + '</div>';
+        return '<div class="pt-error' + (r.indeterminate ? ' unknown' : '') + '"><strong>' +
+          esc(who) + ':</strong> ' + esc(r.error) + '</div>';
       }).join('');
       const note = (p.message && p.status !== 'posted'
         ? '<div class="pt-note">' + esc(p.message) + '</div>' : '') + errLines;
@@ -2159,13 +2165,8 @@
     }
   }
 
-  /* Spread STANDARD_WEEK renders round-robin over the influencer's types. */
-  function weekPlan(cats) {
-    const counts = cats.map(() => 0);
-    for (let i = 0; i < STANDARD_WEEK; i++) counts[i % cats.length]++;
-    return cats.map((c, i) => ({ key: c.key, count: counts[i] })).filter(x => x.count > 0);
-  }
-
+  /* The plan lives on the server: Blocks and Layups get two each, everything
+     else one, and the order is spaced so no type renders back-to-back. */
   async function standardWeek() {
     const inf = influencers[selectedPlayer];
     if (!inf || !inf.cats.length) {
@@ -2177,12 +2178,13 @@
     btn.disabled = true;
     btn.textContent = 'QUEUEING…';
     try {
-      let state;
-      /* one call per type, seed left random — a week is meant to be a mixed bag */
-      for (const slot of weekPlan(inf.cats)) {
-        state = await postJobs(slot.key, slot.count, null);
-      }
-      renderQueue(state);
+      const data = await fetch('/standard-week', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player: selectedPlayer, vr_on_top: vrOnTop }),
+      }).then(r => r.json());
+      if (data.error) { showError(data.error); return; }
+      renderQueue(data.queue);
       startPolling();
     } catch (e) {
       showError(e.message);
