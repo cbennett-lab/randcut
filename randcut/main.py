@@ -903,6 +903,9 @@ def make_delivery_copy(src: Path, dest: Path):
         "-pix_fmt", "yuv420p",          # some networks reject anything else
         "-r", "30",
         "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+        # the destination is a .part temp file, so the container can't be
+        # inferred from the extension — state it outright
+        "-f", "mp4",
         # moov atom up front, so a fetcher can read the header without the whole file
         "-movflags", "+faststart",
         "-threads", "1",                # keep well clear of the render worker's memory
