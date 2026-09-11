@@ -363,6 +363,11 @@
     font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase;
     color: var(--accent2); margin-top: 5px;
   }
+  .pt-error {
+    font-size: 12px; line-height: 1.45; color: #cc3333;
+    margin-top: 5px; word-break: break-word;
+  }
+  .pt-error strong { font-weight: 600; }
   .pt-action { width: 120px; white-space: nowrap; text-align: right; }
   .pt-action .q-x { margin-left: 6px; vertical-align: middle; }
   .q-track {
@@ -1234,8 +1239,19 @@
       else
         action = '<button class="q-post" onclick="sendPost(\'' + p.post_id + '\')">Post</button>';
 
-      const note = p.message && p.status !== 'posted'
-        ? '<div class="pt-note">' + esc(p.message) + '</div>' : '';
+      /* show why a channel failed inline — a tooltip is no use when every
+         channel fails and all you can see is "0 of 3" */
+      const errs = (p.results || []).filter(r => !r.ok && r.error);
+      const seen = [];
+      const errLines = errs.filter(r => {           // collapse the same error repeated per channel
+        if (seen.includes(r.error)) return false;
+        seen.push(r.error); return true;
+      }).map(r => {
+        const who = errs.filter(e => e.error === r.error).map(e => platformLabel(e.platform)).join(', ');
+        return '<div class="pt-error"><strong>' + esc(who) + ':</strong> ' + esc(r.error) + '</div>';
+      }).join('');
+      const note = (p.message && p.status !== 'posted'
+        ? '<div class="pt-note">' + esc(p.message) + '</div>' : '') + errLines;
 
       return '<tr>' +
         '<td><span class="fm-file">' + esc(p.video_name || '—') + '</span>' +

@@ -947,6 +947,32 @@ def find_post(post_id: str) -> dict | None:
         return next((i for i in POST_QUEUE if i["post_id"] == post_id), None)
 
 
+def check_media_url(url: str) -> dict:
+    """Fetch our own public media URL the way Buffer would: no cookies, from
+    outside. Exercises DNS, TLS, Railway routing and the login gate in one go."""
+    try:
+        resp = requests.get(url, headers={"Range": "bytes=0-2047"}, timeout=20,
+                            allow_redirects=False)
+    except requests.RequestException as e:
+        return {"ok": False, "detail": f"Requesting it failed: {e}."}
+
+    ctype = resp.headers.get("content-type", "")
+    if resp.status_code in (301, 302, 303, 307, 308):
+        return {"ok": False, "detail": f"It redirects to {resp.headers.get('location')!r}; "
+                                       f"Buffer needs a direct link."}
+    if resp.status_code == 401:
+        return {"ok": False, "detail": "It returned 401 — the login gate is covering it, so "
+                                       "Buffer would be asked to sign in."}
+    if resp.status_code == 404:
+        return {"ok": False, "detail": "It returned 404 — the file isn't on this server. On "
+                                       "Railway the state dir must be a mounted volume."}
+    if resp.status_code not in (200, 206):
+        return {"ok": False, "detail": f"It returned HTTP {resp.status_code}."}
+    if "video" not in ctype and "octet-stream" not in ctype:
+        return {"ok": False, "detail": f"It served content-type {ctype!r} rather than video."}
+    return {"ok": True, "detail": f"HTTP {resp.status_code}, {ctype}"}
+
+
 def send_staged_post(item: dict, base: str) -> dict:
     """Push one staged post to Buffer, one queued post per channel."""
     token = auth.buffer_token()
@@ -959,6 +985,14 @@ def send_staged_post(item: dict, base: str) -> dict:
         raise ValueError("The video for this post is no longer on the server.")
 
     video_url = f"{base}{PUBLIC_MEDIA_PREFIX}{item['media_token']}.mp4"
+
+    # Buffer fetches this URL itself, anonymously, from the public internet. If
+    # it can't, every channel fails identically and the real reason is buried in
+    # three copies of the same error — so check it once, up front.
+    check = check_media_url(video_url)
+    if not check["ok"]:
+        raise ValueError(f"Buffer can't fetch the video. {check['detail']} URL: {video_url}")
+
     results = []
     for chan in item["channels"]:
         entry = {"platform": chan.get("service"), "handle": chan.get("name")}
@@ -966,6 +1000,8 @@ def send_staged_post(item: dict, base: str) -> dict:
             post = buffer_api.create_video_post(token, chan["id"], item["caption"], video_url)
             entry.update({"ok": True, "post_id": post.get("id"), "due_at": post.get("dueAt")})
         except buffer_api.BufferError as e:
+            print(f"Buffer createPost failed for {chan.get('service')} "
+                  f"{chan.get('name')}: {e}")
             entry.update({"ok": False, "error": str(e)})
         results.append(entry)
 
@@ -1558,6 +1594,33 @@ async def stage_post(job_id: str):
 @app.get("/posts")
 async def get_posts():
     return post_queue_snapshot()
+
+
+@app.get("/posts/media-check")
+async def posts_media_check(request: Request):
+    """Is the media URL Buffer would fetch actually reachable from outside?
+
+    Checks the origin we'd hand Buffer and, if anything is staged, that exact URL.
+    """
+    base = public_base_url(request)
+    with POST_QUEUE_LOCK:
+        staged = [dict(i) for i in POST_QUEUE]
+    out = {
+        "base_url": base,
+        "https": base.startswith("https://"),
+        "public_base_url_env": os.environ.get("PUBLIC_BASE_URL") or None,
+        "oauth_redirect_uri": os.environ.get("OAUTH_REDIRECT_URI") or None,
+        "state_dir": str(auth.STATE_DIR.resolve()),
+        "media_dir_exists": PUBLIC_MEDIA_DIR.exists(),
+        "media_files_on_disk": len(list(PUBLIC_MEDIA_DIR.glob("*.mp4"))) if PUBLIC_MEDIA_DIR.exists() else 0,
+        "checks": [],
+    }
+    for item in staged[:3]:
+        url = f"{base}{PUBLIC_MEDIA_PREFIX}{item.get('media_token')}.mp4"
+        on_disk = (PUBLIC_MEDIA_DIR / f"{item.get('media_token')}.mp4").exists()
+        out["checks"].append({"video": item.get("video_name"), "url": url,
+                              "on_disk": on_disk, **check_media_url(url)})
+    return out
 
 
 @app.post("/posts/{post_id}/send")
