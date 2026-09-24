@@ -18,6 +18,7 @@ import threading
 import queue
 import time
 import zipfile
+import hashlib
 from pathlib import Path
 
 # Local dev reads keys from randcut/.env. On Railway the variables are already
@@ -32,6 +33,8 @@ except ImportError:
 # would otherwise never see anything from .env.
 import auth  # noqa: E402
 import buffer_api  # noqa: E402
+import motion_control  # noqa: E402
+from pydantic import BaseModel, Field
 
 app = FastAPI()
 
@@ -48,6 +51,7 @@ MAIN_DRIVE_FOLDER_ID = "1wsEs_t4F3SqdKtGLiYLtIUrfvIll0Ldr"  # Main folder
 STACKED_CATEGORIES = {}
 PLAYER_IMAGE_IDS = {}
 PLAYER_IMAGE_CACHE = {}  # player_key -> (bytes, content_type)
+PLAYER_IMAGE_FOLDERS = {}
 
 TITLE_FONT_FILE = str(Path(__file__).parent / "static" / "HelveticaNeueLTProHvCn.otf")
 
@@ -90,6 +94,11 @@ def check_cancel():
 
 def run_ffmpeg(cmd: list[str]):
     """Run an ffmpeg/ffprobe command so it can be killed by a cancel request."""
+    with motion_control.MEDIA_LOCK:
+        return _run_render_ffmpeg(cmd)
+
+
+def _run_render_ffmpeg(cmd: list[str]):
     check_cancel()
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     with QUEUE_LOCK:
@@ -127,19 +136,25 @@ def list_drive_files(folder_id: str, mime_prefix: str) -> list[dict]:
     extra, headers = auth.drive_auth()
     url = "https://www.googleapis.com/drive/v3/files"
     params = {
-        "q": f"'{folder_id}' in parents and mimeType contains '{mime_prefix}'",
-        "fields": "files(id, name)",
+        "q": f"'{folder_id}' in parents and trashed = false and mimeType contains '{mime_prefix}'",
+        "fields": "nextPageToken,files(id, name)",
         "pageSize": 200,
         "supportsAllDrives": "true",
         "includeItemsFromAllDrives": "true",
         **extra,
     }
-    resp = requests.get(url, params=params, headers=headers, timeout=15)
-    resp.raise_for_status()
-    return resp.json().get("files", [])
+    files = []
+    while True:
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        page = resp.json()
+        files.extend(page.get("files", []))
+        if not page.get("nextPageToken"):
+            return files
+        params["pageToken"] = page["nextPageToken"]
 
 
-def download_drive_file(file_id: str, dest: Path):
+def download_drive_file(file_id: str, dest: Path, render_cancel: bool = True):
     extra, headers = auth.drive_auth()
     # the REST media endpoint works for private files and skips the old
     # drive.google.com/uc interstitial-cookie dance
@@ -149,7 +164,8 @@ def download_drive_file(file_id: str, dest: Path):
         response.raise_for_status()
         with open(dest, "wb") as f:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
-                check_cancel()
+                if render_cancel:
+                    check_cancel()
                 if chunk:
                     f.write(chunk)
 
@@ -181,19 +197,22 @@ def folder_id_to_url(folder_id: str) -> str:
 
 def populate_stacked_categories():
     """Auto-populate STACKED_CATEGORIES and PLAYER_IMAGE_IDS from the main Drive folder structure."""
-    global STACKED_CATEGORIES, PLAYER_IMAGE_IDS
+    global STACKED_CATEGORIES, PLAYER_IMAGE_IDS, PLAYER_IMAGE_FOLDERS
     category_folders = list_drive_files(MAIN_DRIVE_FOLDER_ID, "application/vnd.google-apps.folder")
 
     new_image_ids = {}
+    new_image_folders = {}
     char_folder = next((f for f in category_folders if f["name"] == "_Character Images"), None)
     if char_folder:
         player_img_folders = list_drive_files(char_folder["id"], "application/vnd.google-apps.folder")
         for pf in player_img_folders:
             player_key = pf["name"].lower().replace(" ", "_")
+            new_image_folders[player_key] = pf["id"]
             files = list_drive_files(pf["id"], "image/")
             if files:
                 new_image_ids[player_key] = files[0]["id"]
     PLAYER_IMAGE_IDS = new_image_ids
+    PLAYER_IMAGE_FOLDERS = new_image_folders
 
     new_categories = {}
     combo_pending = []  # processed after regular categories are known
@@ -1252,11 +1271,216 @@ def delete_output(job: dict):
             pass
 
 
+# ── Missing IRL generation / approval ─────────────────────────────────────
+def reserve_drive_file_id() -> str:
+    response = requests.get("https://www.googleapis.com/drive/v3/files/generateIds",
+                            headers=auth.drive_write_headers(), params={"count": 1, "space": "drive"}, timeout=30)
+    response.raise_for_status()
+    return response.json()["ids"][0]
+
+
+def upload_approved_clip(path: Path, job: dict, mark_attempt):
+    """A persisted, preallocated ID makes approval retries safe after a timeout."""
+    headers = auth.drive_write_headers()
+    file_id = job["drive_file_id"]
+    metadata_url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+    params = {"supportsAllDrives": "true", "fields": "id,name,parents,size,md5Checksum,trashed"}
+    digest = hashlib.md5()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    def verify_existing(response):
+        response.raise_for_status()
+        data = response.json()
+        if (data.get("trashed") or data.get("name") != job["filename"]
+                or job["irl_folder_id"] not in data.get("parents", [])
+                or data.get("md5Checksum") != digest.hexdigest()):
+            raise motion_control.MotionError("The reserved Drive file differs from this approval. Check its contents in Drive.")
+
+    existing = requests.get(metadata_url, headers=headers, params=params, timeout=30)
+    if existing.status_code != 404:
+        verify_existing(existing)
+        return
+    # Don't overwrite or silently add another match if someone filled the gap.
+    files = list_drive_files(job["irl_folder_id"], "video/")
+    match = match_irl_clip(job["gameplay"], files, job["player"])
+    if match:
+        raise motion_control.MotionError("A matching IRL clip is already in Drive. Refresh File Management to review it.")
+    mark_attempt(True)
+    response = requests.post("https://www.googleapis.com/upload/drive/v3/files",
+                             params={"uploadType": "resumable", "supportsAllDrives": "true"},
+                             headers={**headers, "X-Upload-Content-Type": "video/mp4",
+                                      "X-Upload-Content-Length": str(path.stat().st_size)},
+                             json={"id": file_id, "name": job["filename"], "mimeType": "video/mp4",
+                                   "parents": [job["irl_folder_id"]]}, timeout=30)
+    if response.status_code == 409:
+        verify_existing(requests.get(metadata_url, headers=headers, params=params, timeout=30))
+        return
+    if 400 <= response.status_code < 500:
+        mark_attempt(False)
+    response.raise_for_status()
+    location = response.headers["Location"]
+    if urlsplit(location).scheme != "https" or urlsplit(location).hostname != "www.googleapis.com":
+        raise motion_control.MotionError("Google returned an invalid upload endpoint.")
+    with path.open("rb") as f:
+        uploaded = requests.put(location, headers={**headers, "Content-Type": "video/mp4"},
+                                data=f, timeout=(15, 180))
+    uploaded.raise_for_status()
+    verify_existing(requests.get(metadata_url, headers=headers, params=params, timeout=30))
+
+
+MOTION = motion_control.MotionQueue(
+    auth.STATE_DIR / "motion",
+    lambda file_id, path: download_drive_file(file_id, path, render_cancel=False),
+    reserve_drive_file_id, upload_approved_clip,
+)
+
+
+class MotionRequest(BaseModel):
+    player: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=200)
+    gameplay_id: str | None = Field(default=None, max_length=200)
+
+
+class MotionResume(BaseModel):
+    task_id: str = Field(default="", max_length=200)
+
+
+class ConnectionToken(BaseModel):
+    token: str = Field(min_length=1, max_length=2000)
+
+
+def motion_specs(body: MotionRequest) -> tuple[list[dict], list[dict]]:
+    """Resolve clip specs and the character image pool from trusted Drive folders."""
+    if not auth.kie_token():
+        raise motion_control.MotionError("Add your Kie.ai API key in Connections first.")
+    cat = STACKED_CATEGORIES.get(body.category)
+    if not cat or body.player not in cat["players"]:
+        raise motion_control.MotionError("Unknown video type or influencer. Refresh File Management.")
+    cache = {}
+    report = category_inventory(body.category, cat, body.player, cache)
+    candidates = [(g, c) for g in report["groups"] for c in g["clips"]
+                  if not c["matched"] and (body.gameplay_id is None or c["gameplay_id"] == body.gameplay_id)]
+    if body.gameplay_id and not candidates:
+        raise motion_control.MotionError("This clip is already matched or no longer belongs to this group.")
+    # Unnumbered clips cannot pair even after generation: leave them for renaming.
+    if body.gameplay_id and candidates[0][1]["number"] is None:
+        raise motion_control.MotionError("Rename the gameplay clip with a three-digit clip number first.")
+    candidates = [(g, c) for g, c in candidates if c["number"] is not None]
+    if not candidates:
+        return [], []
+    folder_id = PLAYER_IMAGE_FOLDERS.get(body.player)
+    images = list_drive_files(folder_id, "image/") if folder_id else []
+    images = [f for f in images if Path(f["name"]).suffix.lower() in {".jpg", ".jpeg", ".png"}]
+    if not images:
+        raise motion_control.MotionError("No JPG or PNG images found in this influencer's _Character Images folder.")
+    specs = []
+    for group, clip in candidates:
+        source = STACKED_CATEGORIES[group["source_key"]]
+        carrington = source["players"].get("carrington")
+        if not carrington:
+            raise motion_control.MotionError(f"{source['label']} has no IRL/Carrington folder for motion references.")
+        motion_folder_id = extract_folder_id(carrington["irl_folder"])
+        if motion_folder_id not in cache:
+            cache[motion_folder_id] = list_drive_files(motion_folder_id, "video/")
+        reference = match_irl_clip(clip["gameplay"], cache[motion_folder_id], "carrington")
+        if reference is None:
+            raise motion_control.MotionError(
+                f"No matching Carrington motion clip for {clip['gameplay']} in "
+                f"{source['label']}/IRL/Carrington. Add the matching clip before generating.")
+        specs.append({"player": body.player, "category": group["source_key"],
+                      "gameplay_id": clip["gameplay_id"], "gameplay": clip["gameplay"],
+                      "motion_id": reference["id"], "motion_name": reference["name"],
+                      "irl_folder_id": extract_folder_id(source["players"][body.player]["irl_folder"]),
+                      "filename": body.player + "_" + Path(clip["gameplay"]).stem + ".mp4"})
+    return specs, images
+
+
+def motion_error(error):
+    if isinstance(error, requests.RequestException):
+        # Request exception URLs may contain API keys or signed download tokens.
+        message = "The remote service could not be reached or rejected the request. Check Connections and try again."
+    else:
+        message = str(error)
+    return JSONResponse(status_code=400, content={"error": message})
+
+
+@app.post("/connections/kie")
+def save_kie(body: ConnectionToken, request: Request):
+    try:
+        auth.save_kie_token(body.token)
+        return connections(request)
+    except auth.AuthError as e:
+        return motion_error(e)
+
+
+@app.get("/motion")
+def motion_jobs(player: str | None = None):
+    try:
+        return {"jobs": MOTION.snapshot(player)}
+    except (motion_control.MotionError, auth.AuthError, requests.RequestException, OSError, ValueError) as e:
+        return motion_error(e)
+
+
+@app.post("/motion/generate")
+def generate_motion(body: MotionRequest):
+    try:
+        specs, images = motion_specs(body)
+        ids = MOTION.enqueue(specs, images)
+        return {"queued": len(ids), "jobs": MOTION.snapshot(body.player)}
+    except (motion_control.MotionError, auth.AuthError, requests.RequestException, OSError) as e:
+        return motion_error(e)
+
+
+@app.api_route("/motion/{job_id}/preview", methods=["GET", "HEAD"])
+def motion_preview(job_id: str):
+    try:
+        job = MOTION.get(job_id)
+        path = MOTION.root / job["id"] / "generated.mp4"
+        if job["status"] not in {"pending", "approving"} or not path.is_file():
+            return JSONResponse(status_code=404, content={"error": "Preview is not ready."})
+        return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "private, no-store"})
+    except motion_control.MotionError as e:
+        return motion_error(e)
+
+
+@app.post("/motion/{job_id}/approve")
+def approve_motion(job_id: str):
+    try:
+        MOTION.approve(job_id)
+        return {"ok": True}
+    except (motion_control.MotionError, auth.AuthError, requests.RequestException, OSError, ValueError) as e:
+        return motion_error(e)
+
+
+@app.post("/motion/{job_id}/check")
+def check_motion(job_id: str, body: MotionResume):
+    try:
+        MOTION.resume(job_id, body.task_id)
+        return {"ok": True}
+    except (motion_control.MotionError, auth.AuthError, requests.RequestException, OSError, ValueError) as e:
+        return motion_error(e)
+
+
+@app.delete("/motion/{job_id}")
+def discard_motion(job_id: str):
+    try:
+        MOTION.discard(job_id)
+        return {"ok": True}
+    except (motion_control.MotionError, OSError) as e:
+        return motion_error(e)
+
+
 @app.on_event("startup")
 async def startup_event():
     """Populate categories from Drive and start the render worker."""
     threading.Thread(target=render_worker, daemon=True).start()
     load_post_queue()
+    try:
+        await run_in_threadpool(MOTION.start)
+    except Exception as e:
+        print(f"Warning: could not start motion queue: {e}")
 
     def warm_drive():
         # off the startup path so the app serves immediately — Buffer may be
@@ -1299,6 +1523,7 @@ def pairing_rows(vr_files: list[dict], irl_files: list[dict], player_key: str) -
         rows.append({
             "number": clip_number(vr["name"]),
             "gameplay": vr["name"],
+            "gameplay_id": vr["id"],
             "irl": irl["name"] if irl else None,
             "matched": irl is not None,
         })
@@ -1310,7 +1535,7 @@ def pairing_rows(vr_files: list[dict], irl_files: list[dict], player_key: str) -
     return rows, orphans
 
 
-def inventory_group(cat: dict, player_key: str, required: int, cache: dict) -> dict:
+def inventory_group(cat: dict, player_key: str, required: int, cache: dict, source_key: str = "") -> dict:
     """Pairing report for one plain category (a combo contributes one of these per segment)."""
     def videos(folder_url: str) -> list[dict]:
         # combos re-reference folders their standalone types already listed
@@ -1326,6 +1551,7 @@ def inventory_group(cat: dict, player_key: str, required: int, cache: dict) -> d
     )
     return {
         "source_label": cat["label"],
+        "source_key": source_key,
         "required": required,
         "total": len(rows),
         "matched": sum(1 for r in rows if r["matched"]),
@@ -1344,9 +1570,9 @@ def category_inventory(cat_key: str, cat: dict, player_key: str, cache: dict) ->
             src_cat = STACKED_CATEGORIES.get(src_key)
             if src_cat is None:
                 raise ValueError(f"Combo source '{segment['source']}' is missing from Drive.")
-            groups.append(inventory_group(src_cat, player_key, segment.get("count", 0), cache))
+            groups.append(inventory_group(src_cat, player_key, segment.get("count", 0), cache, src_key))
     else:
-        groups = [inventory_group(cat, player_key, NUM_PAIRS, cache)]
+        groups = [inventory_group(cat, player_key, NUM_PAIRS, cache, cat_key)]
 
     return {
         "key": cat_key,
@@ -1490,7 +1716,7 @@ async def auth_logout():
 
 
 @app.get("/connections")
-async def connections(request: Request):
+def connections(request: Request):
     """Which integrations are wired up.
 
     Reports presence and health only — never the credential itself.
@@ -1523,6 +1749,10 @@ async def connections(request: Request):
         drive = {"connected": False, "account": None, "source": None,
                  "detail": "Not connected. Sign in with Google to grant Drive access."}
 
+    drive["can_write"] = bool(google and google.get("can_write"))
+    drive["detail"] += (" Approved clips can be saved to Drive." if drive["can_write"] else
+                        " Reconnect Google to enable saving approved clips.")
+
     buffer_conn = auth.buffer_connection()
     env_buffer = bool(os.environ.get("BUFFER_ACCESS_TOKEN"))
     buffer = {
@@ -1543,11 +1773,16 @@ async def connections(request: Request):
         "storage_ready": auth.storage_ready(),
         "services": [
             {"key": "google_drive", "label": "Google Drive",
-             "purpose": "Reads the gameplay, IRL and music folders.",
+             "purpose": "Reads source folders and saves approved IRL clips.",
              "auth_style": "oauth", **drive},
             {"key": "buffer", "label": "Buffer",
              "purpose": "Will schedule finished highlights to social.",
              "auth_style": "token", **buffer},
+            {"key": "kie", "label": "Kie.ai", "auth_style": "token",
+             "purpose": "Generates missing IRL clips with Kling 2.6 Motion Control, standard 720p.",
+             "has_key": bool(auth.kie_token()), "hint": (auth.kie_connection() or {}).get("hint"),
+             "source": "saved in app" if auth.kie_connection() else ("environment" if auth.kie_token() else None),
+             "detail": "Generate individual clips or all missing clips in File Management, then review before saving to Drive."},
         ],
     }
 
@@ -1682,19 +1917,19 @@ def analytics_buffer_check(force: bool = False):
 async def save_buffer(request: Request):
     body = await request.json()
     try:
-        auth.save_buffer_token(body.get("token") or "")
+        await run_in_threadpool(auth.save_buffer_token, body.get("token") or "")
     except auth.AuthError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    return await connections(request)
+    return await run_in_threadpool(connections, request)
 
 
 @app.delete("/connections/{service}")
 async def remove_connection(service: str, request: Request):
     try:
-        auth.disconnect("google" if service == "google_drive" else service)
+        await run_in_threadpool(auth.disconnect, "google" if service == "google_drive" else service)
     except auth.AuthError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-    return await connections(request)
+    return await run_in_threadpool(connections, request)
 
 
 @app.get("/player-image/{player_key}")

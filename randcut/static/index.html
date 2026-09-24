@@ -793,6 +793,23 @@
     }
     .rail-body { overflow: visible; }
   }
+  .fm-generation-head { display:flex; align-items:center; flex-wrap:wrap; gap:16px; margin-top:18px; }
+  .fm-motion-status { min-width:210px; white-space:normal; }
+  .fm-motion-status .btn { display:block; margin-top:8px; }
+  .fm-motion-detail { font-size:12px; color:var(--muted); line-height:1.5; margin-top:5px; overflow-wrap:anywhere; }
+  .fm-motion-detail.error { color:#b33232; }
+  .fm-pending { border:1px solid #d6ad42; border-radius:4px; background:#fff5cd; color:#89620a; padding:8px 10px; cursor:pointer; }
+  .fm-motion-track { height:3px; background:#ece5d1; margin-top:8px; overflow:hidden; }
+  .fm-motion-track > div { height:100%; width:30%; background:#c59a27; animation:motion-slide 1.5s ease-in-out infinite; }
+  @keyframes motion-slide { from { transform:translateX(-100%); } to { transform:translateX(440%); } }
+  .motion-review { margin:auto; width:min(720px, 92vw); max-height:92vh; overflow:auto; border:1px solid var(--border); border-radius:10px; padding:24px; color:var(--dark); background:var(--bg); }
+  .motion-review::backdrop { background:rgba(0,0,0,.65); }
+  .motion-review-head { display:flex; justify-content:space-between; align-items:start; gap:20px; }
+  .motion-review h2 { font-family:'Barlow Condensed',sans-serif; overflow-wrap:anywhere; }
+  .motion-review video { display:block; width:100%; max-height:55vh; background:#171717; margin:18px 0; }
+  .motion-review-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:12px; margin-top:16px; }
+  .motion-review-progress { font-size:13px; color:var(--muted); margin:8px 0 12px; }
+  #motionReviewError { margin-top:12px; font-size:14px; color:#9d3821; }
 </style>
 </head>
 <body>
@@ -986,6 +1003,7 @@
           <div class="cat-loading-label">Reading Google Drive…</div>
         </div>
 
+        <div id="fmNotice" role="status" aria-live="polite"></div>
         <div id="fmResult">
           <div class="placeholder">
             <div class="placeholder-title">PICK AN INFLUENCER</div>
@@ -1032,6 +1050,18 @@
 
 </div>
 
+<dialog id="motionReview" class="motion-review" aria-labelledby="motionReviewTitle">
+  <div class="motion-review-head"><h2 id="motionReviewTitle"></h2><button type="button" class="conn-link" data-review-action onclick="document.getElementById('motionReview').close()" aria-label="Close preview">✕</button></div>
+  <div id="motionReviewProgress" class="motion-review-progress" role="status" aria-live="polite"></div>
+  <p id="motionReviewInfo" class="conn-detail"></p>
+  <video id="motionReviewVideo" controls playsinline preload="metadata"></video>
+  <div id="motionReviewError" role="status" aria-live="polite"></div>
+  <div class="motion-review-actions">
+    <button type="button" class="btn btn-secondary btn-sm" data-review-action onclick="reviewMotion('discard')">Discard</button>
+    <button type="button" class="btn btn-secondary btn-sm" data-review-action id="motionReviewSkip" onclick="reviewMotion('skip')">Skip</button>
+    <button type="button" class="btn btn-primary btn-sm" data-review-action onclick="reviewMotion('approve')">Approve &amp; Save to Drive</button>
+  </div>
+</dialog>
 <script>
   const STANDARD_WEEK = 7;   // must stay <= the backend's MAX_BATCH
 
@@ -1820,7 +1850,7 @@
 
   function renderConnections(data) {
     const cards = (data.services || []).map(s =>
-      s.auth_style === 'oauth' ? googleCardHtml(s, data) : bufferCardHtml(s, data)).join('');
+      s.auth_style === 'oauth' ? googleCardHtml(s, data) : s.key === 'kie' ? kieCardHtml(s, data) : bufferCardHtml(s, data)).join('');
     document.getElementById('connList').innerHTML = accountBarHtml(data) + cards;
   }
 
@@ -1848,7 +1878,7 @@
     /* the sign-in link is the connect action — no key to paste */
     const action = data.login_available
       ? '<a class="btn btn-secondary btn-sm" href="/auth/login">' +
-        (s.account ? 'Reconnect' : 'Connect Google') + '</a>'
+        (s.account ? (s.can_write ? 'Reconnect' : 'Enable Drive uploads') : 'Connect Google') + '</a>'
       : '<span class="conn-detail">Set GOOGLE_CLIENT_ID / SECRET to enable sign-in.</span>';
 
     return '<div class="conn-card">' +
@@ -1897,6 +1927,35 @@
     '</div>';
   }
 
+  function kieCardHtml(s, data) {
+    return '<div class="conn-card conn-card-stack"><div class="conn-main">' +
+      '<div class="conn-head"><span class="conn-name">Kie.ai</span><span class="fm-pill ' + (s.has_key ? 'warn' : 'no') + '">' +
+      (s.has_key ? 'Key saved' : 'Not connected') + '</span></div><div class="conn-purpose">' + esc(s.purpose) + '</div>' +
+      '<div class="conn-detail">' + esc(s.detail) + '</div>' +
+      (s.hint ? '<div class="conn-src">Stored key ends ••••' + esc(s.hint) + '</div>' : '') +
+      (s.source ? '<div class="conn-src">Credential: ' + esc(s.source) + '</div>' : '') +
+      (data.storage_ready ? '<form class="conn-form" onsubmit="event.preventDefault(); saveKie()">' +
+        '<input type="password" class="seed-input conn-input" id="kieToken" aria-label="Kie.ai API key" placeholder="Kie.ai API key" autocomplete="off">' +
+        '<button type="submit" class="btn btn-secondary btn-sm">Save key</button>' +
+        (s.source === 'saved in app' ? '<button type="button" class="conn-link danger" onclick="removeKie()">Remove key</button>' : '') + '</form>' :
+        '<div class="fm-note bad">Set SECRET_KEY before saving API keys.</div>') +
+      '<div class="form-error" id="kieError" role="alert"></div></div></div>';
+  }
+
+  async function saveKie() {
+    const error = document.getElementById('kieError');
+    try {
+      const data = await motionFetch('/connections/kie', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: document.getElementById('kieToken').value }) });
+      renderConnections(data);
+    } catch (e) { error.textContent = e.message; error.classList.add('visible'); }
+  }
+
+  async function removeKie() {
+    try { renderConnections(await motionFetch('/connections/kie', { method: 'DELETE' })); }
+    catch (e) { const error = document.getElementById('kieError'); error.textContent = e.message; error.classList.add('visible'); }
+  }
+
   async function saveBuffer() {
     const input = document.getElementById('bufferToken');
     const err = document.getElementById('bufferError');
@@ -1937,6 +1996,9 @@
     fmPlayer = document.getElementById('fmInfluencerSelect').value || null;
     setAvatar(document.getElementById('fmAvatar'), influencers[fmPlayer]);
     fmData = null;
+    fmMotionJobs = [];
+    fmMotionPlayer = null;
+    fmNotice('');
     fmOpenType = null;
     loadInventory();
   }
@@ -1948,12 +2010,12 @@
   }
 
   async function loadInventory() {
+    const reqId = ++fmRequestId;
     document.getElementById('fmBackBtn').classList.remove('visible');
     if (!fmPlayer) {
       fmPlaceholder('Pick an influencer', 'Choose an influencer to see their clip coverage.');
       return;
     }
-    const reqId = ++fmRequestId;
     const loader = document.getElementById('fmLoading');
     loader.classList.add('visible');
     document.getElementById('fmResult').innerHTML = '';
@@ -1964,6 +2026,7 @@
       if (data.error) { fmPlaceholder('Could not read Drive', data.error); return; }
       fmData = data;
       renderFm();
+      pollMotion();
     } catch (e) {
       if (reqId === fmRequestId) fmPlaceholder('Could not read Drive', e.message);
     } finally {
@@ -2046,9 +2109,17 @@
   function typeDetailHtml(t) {
     const data = fmData;
     const showSource = t.combo && t.groups.length > 1;
+    const clips = motionTypeClips(t);
+    const missingCount = clips.filter(({group, clip}) => canGenerate(group, clip)).length;
+    const pendingCount = pendingMotionJobs(t).length;
     const head =
       '<div class="fm-detail-title">' + esc(t.label) + '</div>' +
-      '<div class="fm-detail-sub">' + esc(data.player_label) + '</div>';
+      '<div class="fm-detail-sub">' + esc(data.player_label) + '</div>' +
+      '<div class="fm-generation-head"><button type="button" class="btn btn-secondary btn-sm" data-motion-action="generate" ' +
+      'data-category="' + esc(t.key) + '" ' + (fmMotionBusy || !missingCount ? 'disabled' : '') +
+      '>Generate All Missing (' + missingCount + ')</button>' +
+      (pendingCount > 1 ? '<button type="button" class="btn btn-secondary btn-sm" data-motion-action="review-all">Review All</button>' : '') +
+      '<span class="fm-motion-detail">Kling 2.6 · Standard 720p · Review before saving to Drive</span></div>';
 
     if (t.error) {
       return head + '<div class="fm-note bad"><span>⚠</span><span>' + esc(t.error) + '</span></div>';
@@ -2063,14 +2134,14 @@
         const irl = c.matched
           ? '<span class="fm-file">' + esc(c.irl) + '</span>'
           : '<span class="fm-file none">no matching clip</span>';
-        const pill = c.matched
-          ? '<span class="fm-pill ok"><span class="fm-mark">✓</span>Matched</span>'
-          : '<span class="fm-pill no"><span class="fm-mark">✕</span>Missing</span>';
+        const pill = motionRowHtml(g, c);
         return '<tr' + (c.matched ? '' : ' class="unmatched"') + '>' +
           '<td class="fm-num">' + num + '</td>' +
-          '<td><span class="fm-file">' + esc(c.gameplay) + '</span></td>' +
+          '<td><span class="fm-file">' + esc(c.gameplay) + '</span>' +
+            (motionFor(g, c)?.motion_name ? '<div class="fm-motion-detail">Motion: IRL/Carrington/' +
+              esc(motionFor(g, c).motion_name) + '</div>' : '') + '</td>' +
           '<td>' + irl + '</td>' +
-          '<td class="fm-status">' + pill + '</td>' +
+          '<td class="fm-status fm-motion-status">' + pill + '</td>' +
         '</tr>';
       }).join('');
 
@@ -2106,6 +2177,274 @@
       '</div>';
     }).join('');
   }
+
+  /* Motion jobs are polled locally; only the server's worker calls Kie. */
+  let fmMotionJobs = [];
+  let fmMotionPlayer = null;
+  let fmMotionBusy = false;
+  let fmMotionPolling = false;
+  let fmMotionVersion = 0;  // ignore polls begun before a successful mutation
+  let fmReviewId = null;
+  let fmReviewSession = null;
+
+  function fmNotice(message, bad = false) {
+    const el = document.getElementById('fmNotice');
+    el.textContent = message;
+    el.className = message ? 'fm-note' + (bad ? ' bad' : '') : '';
+  }
+
+  async function motionFetch(url, options = {}) {
+    const res = await fetch(url, options);
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Request failed. Please try again.');
+    return data;
+  }
+
+  function motionFor(group, clip) {
+    if (fmMotionPlayer !== fmPlayer) return null;
+    return fmMotionJobs.find(j => j.category === group.source_key && j.gameplay_id === clip.gameplay_id);
+  }
+
+  function canGenerate(group, clip) {
+    const job = motionFor(group, clip);
+    return !clip.matched && clip.number != null && (!job || ['error', 'approved'].includes(job.status));
+  }
+
+  function motionTypeClips(type) {
+    // A combo may repeat a source segment. Count / review its clip only once.
+    const seen = new Set();
+    const clips = [];
+    type.groups.forEach(group => group.clips.forEach(clip => {
+      const key = JSON.stringify([group.source_key, clip.gameplay_id]);
+      if (seen.has(key)) return;
+      seen.add(key);
+      clips.push({group, clip});
+    }));
+    return clips;
+  }
+
+  function pendingMotionJobs(type) {
+    const jobs = new Map();
+    motionTypeClips(type).forEach(({group, clip}) => {
+      const job = motionFor(group, clip);
+      if (!clip.matched && job?.status === 'pending') jobs.set(job.id, job);
+    });
+    return [...jobs.values()];
+  }
+
+  async function pollMotion() {
+    if (!fmPlayer || fmMotionPolling) return;
+    fmMotionPolling = true;
+    const player = fmPlayer;
+    const version = fmMotionVersion;
+    try {
+      const data = await motionFetch('/motion?player=' + encodeURIComponent(player));
+      if (player !== fmPlayer || version !== fmMotionVersion) return;
+      const changed = fmMotionPlayer !== player || JSON.stringify(fmMotionJobs) !== JSON.stringify(data.jobs);
+      fmMotionJobs = data.jobs;
+      fmMotionPlayer = player;
+      if (changed) {
+        // A second browser can approve a row while this inventory remains open.
+        let refreshed = false;
+        if (fmData) fmData.types.forEach(t => t.groups.forEach(g => g.clips.forEach(c => {
+          const job = motionFor(g, c);
+          if (!c.matched && job?.status === 'approved') refreshed = true;
+        })));
+        if (refreshed) await loadInventory();
+        else renderFm();
+      }
+    } catch (e) { fmNotice('Generation status unavailable: ' + e.message, true); }
+    finally { fmMotionPolling = false; }
+  }
+
+  async function generateMissing(category, gameplayId = null) {
+    if (fmMotionBusy) return;
+    fmMotionBusy = true;
+    fmNotice('Adding missing clips to the generation queue…');
+    renderFm();
+    const player = fmPlayer;
+    try {
+      const data = await motionFetch('/motion/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player, category, gameplay_id: gameplayId }),
+      });
+      if (player !== fmPlayer) return;
+      fmMotionVersion++;
+      fmMotionJobs = data.jobs;
+      fmMotionPlayer = player;
+      fmNotice(data.queued ? data.queued + ' clip' + (data.queued === 1 ? '' : 's') + ' queued for generation.' :
+        'All eligible missing clips are already queued or waiting for review.');
+    } catch (e) { if (player === fmPlayer) fmNotice(e.message, true); }
+    finally { fmMotionBusy = false; renderFm(); }
+  }
+
+  function motionRowHtml(g, c) {
+    const job = motionFor(g, c);
+    const button = (action, label, extra = '') => '<button type="button" class="btn btn-secondary btn-sm" ' +
+      'data-motion-action="' + action + '" data-category="' + esc(g.source_key) + '" data-clip="' + esc(c.gameplay_id) +
+      '" data-job="' + esc(job?.id || '') + '" ' + extra + '>' + label + '</button>';
+    if (c.matched) return '<span class="fm-pill ok">✓ Matched</span>';
+    if (!job || job.status === 'error' || job.status === 'approved') {
+      return '<span class="fm-pill no">✕ Missing</span>' +
+        (c.number == null ? '<div class="fm-motion-detail">Add a three-digit clip number to the filename.</div>' :
+          button('generate', job?.status === 'error' ? 'Retry generation' : 'Generate', fmMotionBusy ? 'disabled' : '')) +
+        (job?.status === 'error' ? '<div class="fm-motion-detail error">' + esc(job.message) + '</div>' : '');
+    }
+    if (job.status === 'pending') return '<button type="button" class="fm-pill fm-pending" ' +
+      'data-motion-action="review" data-job="' + esc(job.id) + '">● Pending · Review</button>';
+    if (job.status === 'unconfirmed') return '<span class="fm-pill warn">Unconfirmed</span>' +
+      button('check', job.task_id ? 'Check status' : 'Recover task') +
+      '<div class="fm-motion-detail">' + esc(job.message) + '</div>';
+    const label = job.status === 'queued' ? 'Queued #' + (job.position || '—') :
+      job.status === 'approving' ? 'Saving to Drive' : 'Generating';
+    return '<span class="fm-pill warn">' + label + '</span><div class="fm-motion-detail">' + esc(job.message) +
+      (job.progress != null ? ' · ' + Math.round(job.progress) + '%' : '') + '</div>' +
+      '<div class="fm-motion-track"><div' + (job.progress != null ? ' style="animation:none;width:' + job.progress + '%"' : '') + '></div></div>';
+  }
+
+  function openMotionReview(id) {
+    startMotionReview([id], false);
+  }
+
+  function openAllMotionReviews() {
+    const type = fmData?.types.find(t => t.key === fmOpenType);
+    if (type) startMotionReview(pendingMotionJobs(type).map(j => j.id), true);
+  }
+
+  function startMotionReview(ids, batch) {
+    if (fmReviewSession || !ids.length) return;
+    // Freeze this pass: newly completed jobs wait for the next Review All.
+    fmReviewSession = { ids, index: 0, batch, approved: 0, discarded: 0, skipped: 0, busy: false };
+    showNextMotionReview();
+  }
+
+  function showNextMotionReview() {
+    const session = fmReviewSession;
+    if (!session) return;
+    // Another browser may have dealt with a later clip during this review.
+    while (session.index < session.ids.length &&
+           !fmMotionJobs.some(j => j.id === session.ids[session.index] && j.status === 'pending')) {
+      session.index++;
+    }
+    const dialog = document.getElementById('motionReview');
+    if (session.index >= session.ids.length) {
+      const message = session.batch
+        ? 'Review finished: ' + session.approved + ' approved, ' + session.discarded + ' discarded, ' +
+          session.skipped + ' skipped.' + (session.skipped ? ' Skipped clips are still pending.' : '')
+        : session.skipped ? 'Skipped. The clip is still pending.'
+        : session.approved ? 'Approved clip saved to Google Drive.'
+        : session.discarded ? 'Preview discarded. The clip is missing again.' : 'This clip is no longer pending.';
+      if (dialog.open) dialog.close();
+      else { fmReviewSession = null; fmReviewId = null; }
+      fmNotice(message);
+      return;
+    }
+    const id = session.ids[session.index];
+    const job = fmMotionJobs.find(j => j.id === id);
+    fmReviewId = id;
+    dialog.querySelectorAll('button[data-review-action]').forEach(b => b.disabled = false);
+    document.getElementById('motionReviewTitle').textContent = job.filename;
+    document.getElementById('motionReviewProgress').textContent =
+      (session.batch ? 'Review ' + (session.index + 1) + ' of ' + session.ids.length + ' · ' : '') +
+      'Skip keeps this clip pending.';
+    document.getElementById('motionReviewInfo').textContent =
+      (job.motion_name ? 'Motion reference: IRL/Carrington/' + job.motion_name + '. ' : '') +
+      'Character image: ' + job.image_name + '. ' + (job.extended ?
+        'Motion reference extended from ' + job.original_duration.toFixed(2) + 's to 3.1s. ' : '') +
+      'Approval saves a ' + job.target_duration.toFixed(2) + 's clip to this influencer’s IRL folder.';
+    const video = document.getElementById('motionReviewVideo');
+    video.pause();
+    video.src = job.preview_url;
+    video.load();
+    document.getElementById('motionReviewError').textContent = job.message === 'Ready for review' ? '' : job.message;
+    if (!dialog.open) dialog.showModal();
+    else document.getElementById('motionReviewSkip').focus();
+  }
+
+  async function reviewMotion(action) {
+    const session = fmReviewSession;
+    const id = fmReviewId;
+    if (!id || !session || session.busy) return;
+    if (action === 'skip') {
+      session.skipped++;
+      session.index++;
+      showNextMotionReview();
+      return; // Skip never writes to the server or changes a job's status.
+    }
+    const approve = action === 'approve';
+    session.busy = true;
+    const dialog = document.getElementById('motionReview');
+    const buttons = dialog.querySelectorAll('button[data-review-action]');
+    buttons.forEach(b => b.disabled = true);
+    document.getElementById('motionReviewError').textContent = approve ? 'Trimming and saving to Google Drive…' : 'Discarding preview…';
+    try {
+      await motionFetch('/motion/' + encodeURIComponent(id) + (approve ? '/approve' : ''),
+        { method: approve ? 'POST' : 'DELETE' });
+      fmMotionVersion++;
+      const job = fmMotionJobs.find(j => j.id === id);
+      if (approve) {
+        session.approved++;
+        if (job) {
+          job.status = 'approved';
+          // Update coverage immediately; reread Drive once this review closes.
+          fmData?.types.forEach(t => {
+            t.groups.forEach(g => {
+              g.clips.forEach(c => {
+                if (g.source_key === job.category && c.gameplay_id === job.gameplay_id) {
+                  c.matched = true;
+                  c.irl = job.filename;
+                }
+              });
+              g.matched = g.clips.filter(c => c.matched).length;
+            });
+            t.matched = t.groups.reduce((n, g) => n + g.matched, 0);
+            t.short = t.groups.some(g => g.matched < g.required);
+          });
+          if (fmData) fmData.matched = fmData.types.reduce((n, t) => n + t.matched, 0);
+        }
+      } else {
+        session.discarded++;
+        fmMotionJobs = fmMotionJobs.filter(j => j.id !== id);
+      }
+      renderFm();
+      session.index++;
+      session.busy = false;
+      showNextMotionReview();
+    } catch (e) { document.getElementById('motionReviewError').textContent = e.message; }
+    finally { session.busy = false; buttons.forEach(b => b.disabled = false); }
+  }
+
+  document.getElementById('motionReview').addEventListener('cancel', e => {
+    if (fmReviewSession?.busy) e.preventDefault();
+  });
+  document.getElementById('motionReview').addEventListener('close', () => {
+    const session = fmReviewSession;
+    fmReviewSession = null;
+    const video = document.getElementById('motionReviewVideo');
+    video.pause(); video.removeAttribute('src'); video.load(); fmReviewId = null;
+    if (session?.approved) loadInventory();
+  });
+  document.getElementById('fmResult').addEventListener('click', async e => {
+    const button = e.target.closest('[data-motion-action]');
+    if (!button) return;
+    const action = button.dataset.motionAction;
+    if (action === 'generate') return generateMissing(button.dataset.category, button.dataset.clip || null);
+    if (action === 'review') return openMotionReview(button.dataset.job);
+    if (action === 'review-all') return openAllMotionReviews();
+    if (action === 'check') {
+      const job = fmMotionJobs.find(j => j.id === button.dataset.job);
+      const taskId = job?.task_id || prompt('Paste the task ID from Kie.ai Logs for this exact clip. This recovers the existing generation without creating another.');
+      if (!taskId) return;
+      button.disabled = true;
+      try {
+        await motionFetch('/motion/' + encodeURIComponent(job.id) + '/check', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task_id: taskId }),
+        });
+        await pollMotion();
+      } catch (err) { fmNotice(err.message, true); button.disabled = false; }
+    }
+  });
+  setInterval(() => { if (document.getElementById('tab-files').classList.contains('active')) pollMotion(); }, 3000);
 
   /* ─── ADVANCED ─── */
   function setLayout(vrTop) {

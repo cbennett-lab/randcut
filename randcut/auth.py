@@ -44,7 +44,8 @@ SCOPES = [
     "openid",
     "email",
     "profile",
-    "https://www.googleapis.com/auth/drive.readonly",
+    # Existing category folders are discovered automatically (not Picker grants).
+    "https://www.googleapis.com/auth/drive",
 ]
 
 STATE_DIR = Path(os.environ.get("RANDCUT_STATE_DIR", "state"))
@@ -112,12 +113,13 @@ def _write_store(store: dict):
 
 
 def _save_service(name: str, data: dict | None):
-    store = dict(_read_store())
-    if data is None:
-        store.pop(name, None)
-    else:
-        store[name] = data
-    _write_store(store)
+    with _lock:
+        store = dict(_read_store())
+        if data is None:
+            store.pop(name, None)
+        else:
+            store[name] = data
+        _write_store(store)
 
 
 # ── signed session cookie ────────────────────────────────────────────────
@@ -212,10 +214,12 @@ def complete_login(code: str) -> dict:
         "access_token": tokens.get("access_token"),
         "expires_at": time.time() + int(tokens.get("expires_in", 3600)) - 60,
         "connected_at": time.time(),
+        "scopes": tokens.get("scope", "").split(),
     }
     # Google omits refresh_token on re-consent sometimes; keep the one we have
     existing = _read_store().get("google") or {}
-    google["refresh_token"] = tokens.get("refresh_token") or existing.get("refresh_token")
+    google["refresh_token"] = tokens.get("refresh_token") or (
+        existing.get("refresh_token") if existing.get("email") == email else None)
     if not google["refresh_token"]:
         raise AuthError("Google did not return a refresh token. Revoke the app's access "
                         "at myaccount.google.com/permissions and sign in again.")
@@ -228,7 +232,17 @@ def google_connection() -> dict | None:
     g = _read_store().get("google")
     if not g:
         return None
-    return {"email": g.get("email"), "connected_at": g.get("connected_at")}
+    return {"email": g.get("email"), "connected_at": g.get("connected_at"),
+            "can_write": "https://www.googleapis.com/auth/drive" in g.get("scopes", [])}
+
+
+def drive_write_headers() -> dict:
+    if not (google_connection() or {}).get("can_write"):
+        raise AuthError("Reconnect Google in Connections to allow saving approved clips to Drive.")
+    token = drive_access_token()
+    if not token:
+        raise AuthError("Google access expired. Reconnect Google in Connections.")
+    return {"Authorization": f"Bearer {token}"}
 
 
 def drive_access_token() -> str | None:
@@ -302,7 +316,7 @@ def buffer_token() -> str | None:
 
 
 def disconnect(service: str):
-    if service not in ("google", "buffer"):
+    if service not in ("google", "buffer", "kie"):
         raise AuthError(f"Unknown service: {service}")
     _save_service(service, None)
 
@@ -315,6 +329,24 @@ def get_setting(name: str, default=None):
 
 
 def save_setting(name: str, value):
-    settings = dict(_read_store().get("settings") or {})
-    settings[name] = value
-    _save_service("settings", settings)
+    with _lock:
+        settings = dict(_read_store().get("settings") or {})
+        settings[name] = value
+        _save_service("settings", settings)
+
+
+def kie_connection() -> dict | None:
+    k = _read_store().get("kie")
+    return {"hint": k.get("hint"), "connected_at": k.get("connected_at")} if k else None
+
+
+def save_kie_token(token: str):
+    token = token.strip()
+    if not token:
+        raise AuthError("Paste a Kie.ai API key first.")
+    _save_service("kie", {"token": token, "connected_at": time.time(),
+                          "hint": token[-4:] if len(token) > 8 else None})
+
+
+def kie_token() -> str | None:
+    return (_read_store().get("kie") or {}).get("token") or os.environ.get("KIE_API_KEY") or None

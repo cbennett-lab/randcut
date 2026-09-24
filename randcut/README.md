@@ -146,3 +146,72 @@ The queue lives on the server, so a page refresh picks it back up where it left 
 | `NUM_PAIRS` | `3` | How many gameplay/IRL pairs go into one highlight |
 | `CROSSFADE_SEC` | `2.0` | Audio crossfade between segments |
 | `MAX_BATCH` | `20` | Ceiling on renders enqueued by one request |
+
+## Generate missing IRL clips
+
+In **Connections**, save a Kie.ai API key, then choose **Enable Drive uploads**
+(or reconnect Google). Sign-in now requests `https://www.googleapis.com/auth/drive`
+because approvals save files inside the existing, automatically discovered IRL
+folders. Add that scope to the Internal OAuth app's Google Cloud consent settings;
+existing read-only connections keep working for reads until they reconnect. The
+connected account must have permission to add files to the destination folders.
+An API key alone cannot upload to Google Drive.
+
+In **File Management**, choose an influencer and expand a video type:
+
+- **Generate** queues that missing clip; **Generate All Missing** queues the eligible
+  missing clips in the expanded type, including a combo's source groups. Existing
+  matches, queued jobs and pending previews are skipped. The button's count shows
+  the unique eligible clips it will generate, without double-counting combo sources.
+- Each batch shuffles the JPG/PNG images in that influencer's `_Character Images`
+  folder and uses each once before shuffling for another cycle. For 9 clips and 6
+  images, the first 6 use distinct images and the next 3 use 3 distinct images again.
+  Skipped or duplicate clips do not consume a turn. A single Generate still picks
+  a random image. Each job saves its image choice when queued and sends it with
+  the same-numbered motion video from the source category's
+  `IRL/Carrington` folder to Kie. For example, `layup_009.mp4` uses
+  `My Best Layups/IRL/Carrington/Carrington_layup_009.mp4`, while the approved
+  output for Elara remains `IRL/Elara/elara_layup_009.mp4`. Missing Carrington
+  references block submission; first-person Gameplay is never a fallback.
+  The row and review dialog show the selected motion filename. The request uses
+  `kling-2.6/motion-control`, `mode: 720p` (standard), `character_orientation: video`,
+  and the fixed prompt in `motion_control.py`.
+- Carrington motion clips below 3 seconds are extended to 3.1 seconds with forward/slow-reverse
+  playback, looping again for very short sources. Sources are never modified.
+  The motion reference extension is silent. Clips over 30 seconds, videos over
+  100MB, and images over 10MB are rejected with a row-level explanation.
+- Yellow **Pending · Review** opens the generated video. **Discard** removes the
+  local preview and returns the row to Missing. **Skip** closes an individual
+  preview and keeps it Pending. When multiple clips are pending in the expanded
+  video type, **Review All** walks through them once, showing your position and
+  advancing after approve, discard, or skip. Skipped clips stay Pending for later;
+  clips finishing generation during a review wait for the next pass.
+  **Approve & Save to Drive** trims
+  an extended clip to the Carrington reference's original duration minus 0.1 seconds;
+  other clips are capped at the reference's original duration. It saves, for example,
+  `elara_layup_019.mp4` to the source category's `IRL/Elara/` folder.
+
+The generation queue and review files live in `RANDCUT_STATE_DIR/motion` on the
+same Railway volume as credentials. They survive restarts; previews require login.
+Kie's upload service hosts the reference copies, so no additional public media
+route is needed. Keep one replica. Local encoding shares a lock with highlight
+rendering to avoid concurrent ffmpeg passes.
+
+Kie jobs run serially. Status checks back off from 5 to 30 seconds and stop after
+15 minutes. **Check status** resumes the same task without creating another paid
+generation. A submission timeout with no task ID is **Unconfirmed**: use
+**Recover task** with the matching ID from Kie Logs. The references are verified
+before accepting a recovered task. Never blindly regenerate an unconfirmed task.
+Approval retries reuse a persisted, preallocated Drive file ID to prevent duplicate
+uploads. Finished previews remain until approval/discard; monitor volume space.
+
+Kie API references: [Motion Control](https://docs.kie.ai/market/kling/motion-control),
+[file upload](https://docs.kie.ai/file-upload-api/upload-file-stream),
+[task status](https://docs.kie.ai/market/common/get-task-detail).
+
+Run the mocked integration tests and synthetic ffmpeg checks without API spend:
+
+```bash
+cd randcut
+../.venv/bin/python -m unittest discover -s tests -v
+```
